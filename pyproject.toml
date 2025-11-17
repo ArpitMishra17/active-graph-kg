@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "activekg"
+version = "0.1.0"
+description = "Active Graph Knowledge Graph system"
+requires-python = ">=3.12"
+
+[tool.ruff]
+# Target Python 3.12
+target-version = "py312"
+
+# Line length
+line-length = 100
+
+# Exclude directories
+exclude = [
+    "venv",
+    ".venv",
+    ".pytest_cache",
+    "__pycache__",
+    "docs",
+    "observability/dashboards",
+    "db/migrations",
+    "archive",
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Enable rule sets
+select = [
+    "E",     # pycodestyle errors
+    "F",     # Pyflakes
+    "I",     # isort
+    "W",     # pycodestyle warnings
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+    "T20",   # flake8-print (remove prints)
+]
+
+# Ignore specific rules
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+]
+
+# Allow fix for all enabled rules when using --fix
+fixable = ["ALL"]
+unfixable = []
+
+# Per-file ignores
+[tool.ruff.lint.per-file-ignores]
+"activekg/connectors/providers/__init__.py" = [
+    "F401",  # Allow unused imports (optional provider imports)
+]
+"activekg/api/*.py" = [
+    "B008",  # Allow Depends() in FastAPI endpoints
+]
+"activekg/api/admin_connectors.py" = [
+    "E402",  # Allow imports after docstring
+]
+"activekg/connectors/webhooks.py" = [
+    "E402",  # Allow imports near usage (circular import avoidance)
+]
+"tests/**/*.py" = [
+    "T20",   # Allow print statements in tests
+]
+"examples/**/*.py" = [
+    "T20",   # Allow print statements in example scripts
+]
+"scripts/**/*.py" = [
+    "T20",   # Allow print statements in utility scripts
+]
+"evaluation/**/*.py" = [
+    "T20",   # Allow print statements in evaluation/benchmarking scripts
+]
+"activekg/connectors/encryption.py" = [
+    "T20",   # CLI tool with print output (key generation, etc.)
+]
+# Root-level scripts (explicit list for clarity)
+"seed_structured_data.py" = ["T20"]
+"smoke_test.py" = ["T20"]
+"test_*.py" = ["T20"]  # All root-level test files (test_phase1_plus.py, etc.)
+
+[tool.ruff.lint.isort]
+known-first-party = ["activekg"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+
+# Indent with spaces
+indent-style = "space"
+
+# Use \n line endings for all files
+line-ending = "lf"
+
+# Skip magic trailing comma
+skip-magic-trailing-comma = false
+
+# Respect magic trailing comma
+docstring-code-format = true

@@ -1,0 +1,64 @@
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# Environment files (contain secrets)
+.env
+.env.*
+!.env.example
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Test/evaluation results (generated)
+*.log
+evaluation/results.json
+evaluation/*_results.json
+evaluation/datasets/id_map.json
+llm_qa_results*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node modules (frontend)
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# Archives
+archive/
+
+# Lock files (keep requirements.txt)
+*.lock
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Reports (keep markdown docs, exclude generated reports)
+readiness_report.txt
+quick_validation_report.txt

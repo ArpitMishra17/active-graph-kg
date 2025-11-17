@@ -1,0 +1,2064 @@
+from __future__ import annotations
+
+import json
+import os
+import time
+from contextlib import contextmanager
+from datetime import UTC
+from typing import Any
+
+import numpy as np
+import psycopg
+from pgvector.psycopg import Vector, register_vector
+from psycopg_pool import ConnectionPool
+
+from activekg.common.logger import get_enhanced_logger
+from activekg.graph.models import Edge, Node
+
+
+class GraphRepository:
+    """Postgres + pgvector repository with connection pooling.
+
+    Uses psycopg_pool.ConnectionPool for efficient connection reuse.
+    """
+
+    def __init__(self, dsn: str, candidate_factor: float = 2.0):
+        self.dsn = dsn
+        self.candidate_factor = candidate_factor  # For weighted search re-ranking
+        self.logger = get_enhanced_logger(__name__)
+
+        # Initialize connection pool
+        # min_size=2: Keep 2 connections warm for low-latency requests
+        # max_size=10: Allow up to 10 concurrent connections (adjust for load)
+        # timeout=30: Wait up to 30s for available connection
+        self.pool = ConnectionPool(
+            self.dsn,
+            min_size=2,
+            max_size=10,
+            timeout=30.0,
+            open=True,
+            configure=self._configure_connection,
+        )
+        self.logger.info(
+            "Connection pool initialized", extra_fields={"min_size": 2, "max_size": 10}
+        )
+
+    def _distance_operator(self) -> tuple[str, str]:
+        """Return (op_symbol, similarity_sql_expr_template).
+
+        Controlled by env SEARCH_DISTANCE one of: 'cosine' (default), 'l2', 'ip'.
+        - cosine: uses '<=>', similarity = 1 - (embedding <=> %s)
+        - l2:     uses '<->', similarity = 1.0 - LEAST((embedding <-> %s), 1.0)  (clamped)
+        - ip:     uses '<#>', similarity = (embedding <#> %s)  (note: higher is better)
+        """
+        metric = os.getenv("SEARCH_DISTANCE", "cosine").lower()
+        if metric == "l2":
+            # L2 distance: lower is better; clamp to [0,1] for UI similarity display
+            return "<->", "1.0 - LEAST((embedding <-> %s), 1.0)"
+        if metric == "ip":
+            # Inner product: higher is better; return raw IP as similarity
+            return "<#>", "(embedding <#> %s)"
+        # Default: cosine distance
+        return "<=>", "1 - (embedding <=> %s)"
+
+    def _configure_connection(self, conn):
+        """Configure each new connection from the pool."""
+        register_vector(conn)
+
+    @contextmanager
+    def _conn(self, tenant_id: str | None = None):
+        """Get pooled connection with optional tenant context for RLS, with commit-on-exit.
+
+        - Uses a transaction block (`with conn:`) so writes are committed on success and rolled back on error.
+        - Applies `SET LOCAL app.current_tenant_id` inside the transaction to enforce RLS without leaking state.
+        """
+        conn = self.pool.getconn()
+        try:
+            # Start a transaction context to ensure SET LOCAL applies and writes are committed
+            with conn:
+                from psycopg import sql
+
+                with conn.cursor() as cur:
+                    # ALWAYS set or clear tenant context to prevent stale pooled connection state
+                    if tenant_id:
+                        # Prefer set_config() to avoid failures on servers that don't accept bare SET for custom GUCs
+                        try:
+                            cur.execute(
+                                "SELECT set_config('app.current_tenant_id', %s, true)",
+                                (tenant_id,),
+                            )
+                            self.logger.info(
+                                "RLS: set_config tenant", extra_fields={"tenant_id": tenant_id}
+                            )
+                        except Exception as e:
+                            # Best-effort fallback to SET LOCAL; keep transaction usable even if it fails
+                            self.logger.warning(
+                                "RLS: set_config failed; attempting SET LOCAL",
+                                extra_fields={"error": str(e)},
+                            )
+                            try:
+                                cur.execute(
+                                    sql.SQL("SET LOCAL app.current_tenant_id = {}").format(
+                                        sql.Literal(tenant_id)
+                                    )
+                                )
+                                self.logger.info(
+                                    "RLS: SET tenant", extra_fields={"tenant_id": tenant_id}
+                                )
+                            except Exception as e2:
+                                # Do not poison the transaction; continue without tenant filter (RLS will fall back to NULL)
+                                self.logger.warning(
+                                    "RLS: SET LOCAL failed; proceeding without explicit tenant setting",
+                                    extra_fields={"error": str(e2), "tenant_id": tenant_id},
+                                )
+                    else:
+                        # For NULL tenant: use special sentinel that matches RLS policy for NULL rows
+                        # RLS policy: (tenant_id IS NULL) OR (tenant_id = current_setting(...))
+                        # Disable tenant scoping by resetting the setting so current_setting(..., true) returns NULL
+                        try:
+                            cur.execute("RESET app.current_tenant_id")
+                            self.logger.info("RLS: RESET tenant (allow NULL rows)")
+                        except Exception as e:
+                            self.logger.warning(
+                                "RLS: RESET failed, continuing", extra_fields={"error": str(e)}
+                            )
+
+                    # Optional debug: verify tenant context
+                    if os.getenv("ACTIVEKG_DEBUG_RLS", "false").lower() == "true":
+                        cur.execute("SELECT current_setting('app.current_tenant_id', true)")
+                        current_tenant = cur.fetchone()[0]
+                        self.logger.info(
+                            "RLS context verified",
+                            extra_fields={
+                                "requested_tenant": tenant_id,
+                                "current_setting": current_tenant,
+                            },
+                        )
+                # Hand control back to caller within the same transaction
+                yield conn
+        finally:
+            # Always return connection to pool
+            self.pool.putconn(conn)
+
+    def ensure_vector_index(self):
+        """Ensure configured pgvector indexes exist.
+
+        Supports one or both of: IVFFLAT and HNSW via env configuration.
+        - PGVECTOR_INDEX: ivfflat|hnsw (single)
+        - PGVECTOR_INDEXES: comma list (e.g., "ivfflat,hnsw")
+        Metric is derived from SEARCH_DISTANCE (l2|cosine). Defaults to cosine.
+
+        Uses CREATE INDEX CONCURRENTLY and is safe/idempotent.
+        """
+        try:
+            # Determine targets
+            raw = os.getenv("PGVECTOR_INDEXES") or os.getenv("PGVECTOR_INDEX") or ""
+            targets = [t.strip().lower() for t in raw.split(",") if t.strip()] or ["ivfflat"]
+
+            metric = os.getenv("SEARCH_DISTANCE", "cosine").lower()
+            if metric not in ("l2", "cosine"):
+                metric = "cosine"
+            opclass = "vector_l2_ops" if metric == "l2" else "vector_cosine_ops"
+
+            # Params
+            try:
+                lists = int(os.getenv("IVFFLAT_LISTS", "100"))
+            except Exception:
+                lists = 100
+            try:
+                hnsw_m = int(os.getenv("HNSW_M", "16"))
+            except Exception:
+                hnsw_m = 16
+            try:
+                hnsw_efc = int(os.getenv("HNSW_EF_CONSTRUCTION", "128"))
+            except Exception:
+                hnsw_efc = 128
+
+            # Open autocommit connection for index creation
+            conn = psycopg.connect(self.dsn, autocommit=True)
+            register_vector(conn)
+
+            with conn.cursor() as cur:
+                # Helper to check existence
+                def index_exists(name: str) -> bool:
+                    cur.execute(
+                        "SELECT 1 FROM pg_indexes WHERE tablename='nodes' AND indexname=%s",
+                        (name,),
+                    )
+                    return cur.fetchone() is not None
+
+                created: list[str] = []
+                for t in targets:
+                    if t not in ("ivfflat", "hnsw"):
+                        continue
+                    suffix = "l2" if metric == "l2" else "cos"
+                    name = f"idx_nodes_embedding_{t}_{suffix}"
+                    if index_exists(name):
+                        self.logger.info("Index exists", extra_fields={"index": name})
+                        continue
+
+                    if t == "ivfflat":
+                        sql = (
+                            f"CREATE INDEX CONCURRENTLY {name} ON nodes "
+                            f"USING ivfflat (embedding {opclass}) WITH (lists = {lists})"
+                        )
+                    else:  # hnsw
+                        sql = (
+                            f"CREATE INDEX CONCURRENTLY {name} ON nodes "
+                            f"USING hnsw (embedding {opclass}) WITH (m = {hnsw_m}, ef_construction = {hnsw_efc})"
+                        )
+
+                    try:
+                        self.logger.info("Creating vector index", extra_fields={"index": name, "metric": metric, "type": t})
+                        import time
+                        start_ts = time.time()
+                        cur.execute(sql)
+                        duration = time.time() - start_ts
+                        try:
+                            from activekg.observability.metrics import track_index_build
+
+                            track_index_build(duration, type_=t, metric=metric, result="success")
+                        except Exception:
+                            pass
+                        created.append(name)
+                    except psycopg.errors.DuplicateTable:
+                        self.logger.info("Index created by another replica", extra_fields={"index": name})
+                        try:
+                            from activekg.observability.metrics import track_index_build
+
+                            track_index_build(0.0, type_=t, metric=metric, result="duplicate")
+                        except Exception:
+                            pass
+                    except Exception as ce:
+                        self.logger.error("Index creation failed", extra_fields={"index": name, "error": str(ce)})
+                        try:
+                            from activekg.observability.metrics import track_index_build
+                            import time
+
+                            track_index_build(0.0, type_=t, metric=metric, result="error")
+                        except Exception:
+                            pass
+
+                if created:
+                    # Optional: Analyze to help planner
+                    try:
+                        cur.execute("VACUUM ANALYZE nodes")
+                    except Exception:
+                        pass
+                    self.logger.info("Vector indexes created", extra_fields={"created": created})
+
+            conn.close()
+
+        except Exception as e:
+            self.logger.error("ensure_vector_index failed", extra_fields={"error": str(e)})
+            # Non-fatal: system still works without an ANN index
+
+    # --- Admin helpers for ANN indexes ---
+    def list_vector_indexes(self) -> list[str]:
+        """List ANN index names on nodes.embedding."""
+        try:
+            conn = psycopg.connect(self.dsn, autocommit=True)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE schemaname='public' AND tablename='nodes' AND indexname LIKE 'idx_nodes_embedding%'
+                    ORDER BY indexname
+                    """
+                )
+                rows = cur.fetchall() or []
+            conn.close()
+            return [r[0] for r in rows]
+        except Exception:
+            return []
+
+    def drop_vector_indexes(self, names: list[str]) -> list[str]:
+        """Drop specified ANN indexes by name (CONCURRENTLY, non-fatal on error)."""
+        dropped: list[str] = []
+        if not names:
+            return dropped
+        try:
+            conn = psycopg.connect(self.dsn, autocommit=True)
+            with conn.cursor() as cur:
+                for name in names:
+                    try:
+                        cur.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
+                        dropped.append(name)
+                    except Exception as e:
+                        self.logger.error("DROP INDEX failed", extra_fields={"index": name, "error": str(e)})
+            conn.close()
+        except Exception as e:
+            self.logger.error("drop_vector_indexes failed", extra_fields={"error": str(e)})
+        return dropped
+
+    def planned_index_names(self, types: list[str] | None = None, metric: str | None = None) -> list[str]:
+        """Compute expected ANN index names for given types and metric."""
+        metric = (metric or os.getenv("SEARCH_DISTANCE", "cosine")).lower()
+        suffix = "l2" if metric == "l2" else "cos"
+        types = types or [t.strip().lower() for t in (os.getenv("PGVECTOR_INDEXES") or os.getenv("PGVECTOR_INDEX") or "").split(",") if t.strip()] or ["ivfflat"]
+        out: list[str] = []
+        for t in types:
+            if t in ("ivfflat", "hnsw"):
+                out.append(f"idx_nodes_embedding_{t}_{suffix}")
+        return out
+
+    # --- Listing ---
+    def list_nodes(
+        self,
+        classes_filter: list[str] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        tenant_id: str | None = None,
+    ) -> list[Node]:
+        """List nodes with optional class filtering and pagination.
+
+        RLS-aware: uses tenant-scoped connection when tenant_id is provided.
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                # Per-query tuning for ANN search (best-effort; do not poison transaction)
+                try:
+                    raw = os.getenv("PGVECTOR_INDEXES") or os.getenv("PGVECTOR_INDEX") or ""
+                    targets = [t.strip().lower() for t in raw.split(",") if t.strip()]
+                    if not targets:
+                        targets = ["ivfflat"]
+                    # Create a savepoint before GUC changes so any failure won't abort the whole tx
+                    cur.execute("SAVEPOINT akg_guc")
+                    try:
+                        # Helper to check if GUC exists to avoid aborting the transaction
+                        def guc_exists(name: str) -> bool:
+                            try:
+                                cur.execute("SELECT 1 FROM pg_settings WHERE name = %s", (name,))
+                                return cur.fetchone() is not None
+                            except Exception:
+                                return False
+                        if "hnsw" in targets and guc_exists("hnsw.ef_search"):
+                            ef_search = int(os.getenv("HNSW_EF_SEARCH", "80"))
+                            # SET LOCAL is not parameterizable in all servers; inline sanitized integer
+                            cur.execute(f"SET LOCAL hnsw.ef_search = {ef_search}")
+                        if "ivfflat" in targets and guc_exists("ivfflat.probes"):
+                            probes = int(os.getenv("IVFFLAT_PROBES", "4"))
+                            # Inline sanitized integer value
+                            cur.execute(f"SET LOCAL ivfflat.probes = {probes}")
+                        cur.execute("RELEASE SAVEPOINT akg_guc")
+                    except Exception as e:
+                        try:
+                            cur.execute("ROLLBACK TO SAVEPOINT akg_guc")
+                        except Exception:
+                            pass
+                        self.logger.warning("ANN per-query tuning skipped", extra_fields={"error": str(e)})
+                except Exception:
+                    # Savepoint creation or env parsing failed: skip tuning entirely
+                    pass
+                where_clauses: list[str] = []
+                params: list[Any] = []
+
+                if classes_filter:
+                    where_clauses.append("classes && %s::text[]")
+                    params.append(classes_filter)
+
+                where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+                cur.execute(
+                    f"""
+                    SELECT id, tenant_id, classes, props, payload_ref, embedding, metadata,
+                           refresh_policy, triggers, version, last_refreshed, drift_score
+                    FROM nodes
+                    {where_sql}
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (*params, max(0, int(limit)), max(0, int(offset))),
+                )
+
+                out: list[Node] = []
+                for row in cur.fetchall():
+                    emb = np.array(row[5], dtype=np.float32) if row[5] is not None else None
+                    out.append(
+                        Node(
+                            id=str(row[0]),
+                            tenant_id=row[1],
+                            classes=row[2],
+                            props=row[3],
+                            payload_ref=row[4],
+                            embedding=emb,
+                            metadata=row[6],
+                            refresh_policy=row[7],
+                            triggers=row[8],
+                            version=row[9],
+                            last_refreshed=row[10],
+                            drift_score=row[11],
+                        )
+                    )
+                return out
+
+    # --- Nodes ---
+    def create_node(self, node: Node) -> str:
+        with self._conn(tenant_id=node.tenant_id) as conn:
+            with conn.cursor() as cur:
+                emb = node.embedding.tolist() if isinstance(node.embedding, np.ndarray) else None
+                cur.execute(
+                    """
+                    INSERT INTO nodes (id, tenant_id, classes, props, payload_ref, embedding, metadata, refresh_policy, triggers, version, last_refreshed, drift_score)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        node.id,
+                        node.tenant_id,
+                        node.classes,
+                        json.dumps(node.props),
+                        node.payload_ref,
+                        emb,
+                        json.dumps(node.metadata),
+                        json.dumps(node.refresh_policy),
+                        json.dumps(node.triggers),
+                        node.version,
+                        node.last_refreshed,
+                        node.drift_score,
+                    ),
+                )
+                new_id = cur.fetchone()[0]
+                return str(new_id)
+
+    def get_node(self, node_id: str, tenant_id: str | None = None) -> Node | None:
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, classes, props, payload_ref, embedding, metadata,
+                           refresh_policy, triggers, version, last_refreshed, drift_score
+                    FROM nodes WHERE id = %s
+                    """,
+                    (node_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                emb = np.array(row[5], dtype=np.float32) if row[5] is not None else None
+                return Node(
+                    id=str(row[0]),
+                    tenant_id=row[1],
+                    classes=row[2],
+                    props=row[3],
+                    payload_ref=row[4],
+                    embedding=emb,
+                    metadata=row[6],
+                    refresh_policy=row[7],
+                    triggers=row[8],
+                    version=row[9],
+                    last_refreshed=row[10],
+                    drift_score=row[11],
+                )
+
+    def update_node(
+        self,
+        node_id: str,
+        *,
+        classes: list[str] | None = None,
+        props: dict | None = None,
+        payload_ref: str | None = None,
+        metadata: dict | None = None,
+        refresh_policy: dict | None = None,
+        triggers: list[dict] | None = None,
+        tenant_id: str | None = None,
+    ) -> bool:
+        """Update mutable fields for a node.
+
+        RLS-aware: uses tenant-scoped connection when tenant_id is provided.
+        Returns True if a row was updated.
+        """
+        sets: list[str] = ["updated_at = now()"]
+        params: list[Any] = []
+
+        if classes is not None:
+            sets.append("classes = %s")
+            params.append(classes)
+        if props is not None:
+            sets.append("props = %s")
+            params.append(json.dumps(props))
+        if payload_ref is not None:
+            sets.append("payload_ref = %s")
+            params.append(payload_ref)
+        if metadata is not None:
+            sets.append("metadata = %s")
+            params.append(json.dumps(metadata))
+        if refresh_policy is not None:
+            sets.append("refresh_policy = %s")
+            params.append(json.dumps(refresh_policy))
+        if triggers is not None:
+            sets.append("triggers = %s")
+            params.append(json.dumps(triggers))
+
+        if len(sets) == 1:  # only updated_at
+            return True
+
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                sql = f"UPDATE nodes SET {', '.join(sets)} WHERE id = %s"
+                params.append(node_id)
+                cur.execute(sql, params)
+                return cur.rowcount > 0
+
+    def delete_node(self, node_id: str, hard: bool = False, tenant_id: str | None = None) -> bool:
+        """Delete a node.
+
+        - hard=True: permanent delete
+        - hard=False: soft delete (adds 'Deleted' class and grace window)
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                if hard:
+                    cur.execute("DELETE FROM nodes WHERE id = %s", (node_id,))
+                    return cur.rowcount > 0
+                # Soft-delete: add Deleted class if absent, set deletion metadata
+                cur.execute(
+                    """
+                    UPDATE nodes
+                    SET classes = CASE WHEN NOT ('Deleted' = ANY(classes))
+                                       THEN array_append(classes, 'Deleted')
+                                       ELSE classes END,
+                        props = props || jsonb_build_object(
+                            'deleted_at', now(),
+                            'deletion_grace_until', (now() + interval '30 days')
+                        )
+                    WHERE id = %s
+                    """,
+                    (node_id,),
+                )
+                return cur.rowcount > 0
+
+    def update_node_embedding(
+        self,
+        node_id: str,
+        embedding: np.ndarray,
+        drift: float,
+        timestamp: str,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Update node embedding, drift score, and last_refreshed timestamp.
+
+        RLS-aware: uses tenant-scoped connection when tenant_id is provided.
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE nodes
+                    SET embedding = %s,
+                        drift_score = %s,
+                        last_refreshed = %s,
+                        updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (embedding.tolist(), drift, timestamp, node_id),
+                )
+
+    def vector_search(
+        self,
+        query_embedding: np.ndarray,
+        top_k: int = 10,
+        metadata_filters: dict | None = None,
+        compound_filter: dict | None = None,
+        classes_filter: list[str] | None = None,
+        tenant_id: str | None = None,
+        use_weighted_score: bool = False,
+        decay_lambda: float = 0.01,
+        drift_beta: float = 0.1,
+    ) -> list[tuple[Node, float]]:
+        """Search nodes by vector similarity with optional metadata filters.
+
+        Args:
+            query_embedding: Query vector (384 dimensions)
+            top_k: Number of results to return
+            metadata_filters: Simple equality filters (e.g., {"category": "AI"})
+            compound_filter: JSONB containment filter for nested/typed queries (e.g., {"tags": ["research"], "metrics.views": 1000})
+            classes_filter: Filter by node classes (array overlap: classes && ['Job', 'Resume'])
+            tenant_id: Filter by tenant for multi-tenancy
+            use_weighted_score: If True, apply recency/drift weighting (default: False)
+            decay_lambda: Decay rate for age penalty (default: 0.01 = ~1% per day)
+            drift_beta: Drift penalty weight (default: 0.1 = 10% penalty per drift unit)
+
+        Returns list of (Node, similarity_score) tuples ordered by similarity.
+
+        Weighted scoring formula (when use_weighted_score=True):
+            age_days = (now - last_refreshed) / 86400
+            decay = exp(-decay_lambda * age_days)
+            drift_penalty = 1 - (drift_beta * COALESCE(drift_score, 0))
+            weighted_score = similarity * decay * drift_penalty
+
+        Performance: Uses ANN for candidate retrieval (ORDER BY <=>), then re-ranks
+        top candidates by weighted score to retain index performance.
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                if os.getenv("ACTIVEKG_DEBUG_RLS", "false").lower() == "true":
+                    try:
+                        cur.execute("SELECT current_setting('app.current_tenant_id', true)")
+                        self.logger.info(
+                            "vector_search tenant", extra_fields={"tenant": cur.fetchone()[0]}
+                        )
+                    except Exception:
+                        pass
+                query_vec = query_embedding.tolist()
+                # Wrap with Vector() for proper pgvector type adaptation
+                query_vec_param = Vector(query_vec)
+
+                # Build WHERE clause for filters
+                # Note: tenant isolation is handled by RLS, not application WHERE clause
+                where_clauses: list[str] = []
+                params: list[Any] = [query_vec_param]
+
+                if classes_filter:
+                    # Array overlap: classes && ['Job', 'Resume']::text[]
+                    where_clauses.append("classes && %s::text[]")
+                    params.append(classes_filter)
+
+                if metadata_filters:
+                    for key, value in metadata_filters.items():
+                        # Compare stringified JSONB field to provided value
+                        where_clauses.append("metadata->>%s = %s")
+                        params.extend([key, str(value)])
+
+                # Compound JSONB containment filter (uses GIN index)
+                if compound_filter:
+                    where_clauses.append("metadata @> %s::jsonb")
+                    params.append(json.dumps(compound_filter))
+
+                where_sql = " AND " + " AND ".join(where_clauses) if where_clauses else ""
+
+                # Fetch more candidates if using weighted scoring for re-ranking
+                # Use configurable candidate_factor (default 2.0, set via env WEIGHTED_SEARCH_CANDIDATE_FACTOR)
+                fetch_limit = int(top_k * self.candidate_factor) if use_weighted_score else top_k
+
+                # Execute with param order: select_vec, filters..., order_vec, limit
+                self.logger.info(
+                    "vector_search executing",
+                    extra_fields={
+                        "top_k": top_k,
+                        "use_weighted": use_weighted_score,
+                        "has_filters": bool(metadata_filters or compound_filter),
+                    },
+                )
+                op, sim_expr = self._distance_operator()
+                sql = f"""
+                    SELECT
+                        id, tenant_id, classes, props, payload_ref, embedding,
+                        metadata, refresh_policy, triggers, version,
+                        last_refreshed, drift_score,
+                        {sim_expr} as similarity
+                    FROM nodes
+                    WHERE embedding IS NOT NULL{where_sql}
+                    ORDER BY embedding {op} %s
+                    LIMIT %s
+                """
+                cur.execute(sql, params + [query_vec_param, fetch_limit])
+
+                results: list[tuple[Node, float]] = []
+                for row in cur.fetchall():
+                    emb = np.array(row[5], dtype=np.float32) if row[5] is not None else None
+                    node = Node(
+                        id=str(row[0]),
+                        tenant_id=row[1],
+                        classes=row[2],
+                        props=row[3],
+                        payload_ref=row[4],
+                        embedding=emb,
+                        metadata=row[6],
+                        refresh_policy=row[7],
+                        triggers=row[8],
+                        version=row[9],
+                        last_refreshed=row[10],
+                        drift_score=row[11],
+                    )
+                    similarity = float(row[12])
+                    results.append((node, similarity))
+
+                # Apply weighted scoring if enabled
+                if use_weighted_score:
+                    import math
+                    from datetime import datetime
+
+                    weighted_results: list[tuple[Node, float]] = []
+                    now = datetime.now(UTC)
+
+                    for node, similarity in results:
+                        # Calculate age in days
+                        if node.last_refreshed:
+                            age_seconds = (now - node.last_refreshed).total_seconds()
+                            age_days = age_seconds / 86400.0
+                        else:
+                            # No refresh timestamp - assume very old (e.g., 365 days)
+                            age_days = 365.0
+
+                        # Calculate decay: exp(-lambda * age_days)
+                        decay = math.exp(-decay_lambda * age_days)
+
+                        # Calculate drift penalty: 1 - (beta * drift_score)
+                        drift = node.drift_score if node.drift_score is not None else 0.0
+                        drift_penalty = max(0.0, 1.0 - (drift_beta * drift))
+
+                        # Weighted score
+                        weighted_score = similarity * decay * drift_penalty
+
+                        weighted_results.append((node, weighted_score))
+
+                    # Re-rank by weighted score and return top_k
+                    weighted_results.sort(key=lambda x: x[1], reverse=True)
+                    out = weighted_results[:top_k]
+                else:
+                    out = results
+
+                self.logger.info("vector_search results", extra_fields={"count": len(out)})
+                return out
+
+    def hybrid_search(
+        self,
+        query_text: str,
+        query_embedding: np.ndarray,
+        top_k: int = 10,
+        metadata_filters: dict | None = None,
+        compound_filter: dict | None = None,
+        classes_filter: list[str] | None = None,
+        tenant_id: str | None = None,
+        use_reranker: bool = True,
+        vector_weight: float = 0.7,
+        text_weight: float = 0.3,
+        rerank_skip_threshold: float = 0.80,
+    ) -> list[tuple[Node, float]]:
+        """Hybrid search with PostgreSQL ts_rank + vector similarity.
+
+        Combines full-text search (ts_rank) with vector similarity for better recall.
+        Optionally applies cross-encoder reranking for precision.
+
+        Args:
+            query_text: Raw query string for full-text search
+            query_embedding: Query vector for semantic search
+            top_k: Number of results to return
+            metadata_filters: Simple equality filters
+            compound_filter: JSONB containment filter
+            classes_filter: Filter by node classes (array overlap: classes && ['Job', 'Resume'])
+            tenant_id: Optional tenant ID for RLS
+            use_reranker: Apply cross-encoder reranking (default: True)
+            vector_weight: Weight for vector similarity (default: 0.7)
+            text_weight: Weight for text rank score (default: 0.3)
+            rerank_skip_threshold: Skip reranking if top hybrid_score >= this (default: 0.80)
+
+        Returns:
+            List of (Node, hybrid_score) tuples ordered by fused score
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                # Per-query tuning for ANN search (best-effort; do not poison transaction)
+                try:
+                    raw = os.getenv("PGVECTOR_INDEXES") or os.getenv("PGVECTOR_INDEX") or ""
+                    targets = [t.strip().lower() for t in raw.split(",") if t.strip()]
+                    if not targets:
+                        targets = ["ivfflat"]
+                    cur.execute("SAVEPOINT akg_guc")
+                    try:
+                        def guc_exists(name: str) -> bool:
+                            try:
+                                cur.execute("SELECT 1 FROM pg_settings WHERE name = %s", (name,))
+                                return cur.fetchone() is not None
+                            except Exception:
+                                return False
+                        if "hnsw" in targets and guc_exists("hnsw.ef_search"):
+                            ef_search = int(os.getenv("HNSW_EF_SEARCH", "80"))
+                            cur.execute(f"SET LOCAL hnsw.ef_search = {ef_search}")
+                        if "ivfflat" in targets and guc_exists("ivfflat.probes"):
+                            probes = int(os.getenv("IVFFLAT_PROBES", "4"))
+                            cur.execute(f"SET LOCAL ivfflat.probes = {probes}")
+                        cur.execute("RELEASE SAVEPOINT akg_guc")
+                    except Exception as e:
+                        try:
+                            cur.execute("ROLLBACK TO SAVEPOINT akg_guc")
+                        except Exception:
+                            pass
+                        self.logger.warning("ANN per-query tuning skipped", extra_fields={"error": str(e)})
+                except Exception:
+                    pass
+                if os.getenv("ACTIVEKG_DEBUG_RLS", "false").lower() == "true":
+                    try:
+                        cur.execute("SELECT current_setting('app.current_tenant_id', true)")
+                        self.logger.info(
+                            "hybrid_search tenant", extra_fields={"tenant": cur.fetchone()[0]}
+                        )
+                    except Exception:
+                        pass
+                query_vec = query_embedding.tolist()
+                # Wrap with Vector() for proper pgvector type adaptation
+                query_vec_param = Vector(query_vec)
+
+                # Build WHERE filters
+                # Note: tenant isolation is handled by RLS, not application WHERE clause
+                where_clauses: list[str] = []
+                filter_params: list[Any] = []
+
+                if classes_filter:
+                    # Array overlap: classes && ['Job', 'Resume']::text[]
+                    where_clauses.append("classes && %s::text[]")
+                    filter_params.append(classes_filter)
+
+                if metadata_filters:
+                    for key, value in metadata_filters.items():
+                        where_clauses.append("metadata->>%s = %s")
+                        filter_params.extend([key, str(value)])
+
+                if compound_filter:
+                    where_clauses.append("metadata @> %s::jsonb")
+                    filter_params.append(json.dumps(compound_filter))
+
+                where_sql = " AND " + " AND ".join(where_clauses) if where_clauses else ""
+
+                # Adaptive candidate_k based on expected similarity
+                # Base: 20 candidates, increase to 40-50 when uncertain (lower top score)
+                if use_reranker:
+                    try:
+                        base_candidates = int(os.getenv("HYBRID_RERANKER_BASE", "20"))
+                        _boost_candidates = int(
+                            os.getenv("HYBRID_RERANKER_BOOST", "45")
+                        )  # Reserved for future adaptive boosting
+                        adaptive_threshold = float(os.getenv("HYBRID_ADAPTIVE_THRESHOLD", "0.55"))
+                    except Exception:
+                        base_candidates, _boost_candidates, adaptive_threshold = 20, 45, 0.55
+
+                    # Use base candidates initially; will adapt after seeing top score
+                    candidate_k = base_candidates
+                else:
+                    candidate_k = top_k
+
+                # Build params in SQL order: [query_vec_param, query_text, ...filters..., query_vec_param, candidate_k]
+                params = [
+                    query_vec_param,  # For SELECT vec_similarity
+                    query_text,  # For ts_rank
+                ]
+                params.extend(filter_params)  # WHERE filters
+                params.extend(
+                    [
+                        query_vec_param,  # For ORDER BY
+                        candidate_k,  # For LIMIT
+                    ]
+                )
+
+                self.logger.info(
+                    "hybrid_search executing",
+                    extra_fields={
+                        "top_k": top_k,
+                        "use_reranker": use_reranker,
+                        "has_filters": bool(metadata_filters or compound_filter),
+                        "classes_filter": classes_filter,
+                        "where_sql": where_sql,
+                    },
+                )
+
+                # DEBUG: Log the SQL and parameters
+                op, sim_expr = self._distance_operator()
+                sql_query = f"""
+                    SELECT
+                        id, tenant_id, classes, props, payload_ref, embedding,
+                        metadata, refresh_policy, triggers, version,
+                        last_refreshed, drift_score,
+                        {sim_expr} as vec_similarity,
+                        ts_rank(text_search_vector, websearch_to_tsquery('english', %s)) as ts_rank_score
+                    FROM nodes
+                    WHERE embedding IS NOT NULL
+                      AND text_search_vector IS NOT NULL
+                      {where_sql}
+                    ORDER BY embedding {op} %s
+                    LIMIT %s
+                    """
+                self.logger.info(
+                    "hybrid_search SQL",
+                    extra_fields={
+                        "sql": sql_query.replace("\n", " ").strip(),
+                        "filter_params": str(filter_params),
+                        "candidate_k": candidate_k,
+                    },
+                )
+
+                cur.execute(sql_query, params)
+
+                # Parse results and gather candidates
+                candidates: list[tuple[Node, float, float]] = []  # (node, vec_sim, ts_rank)
+                max_ts_rank = 0.0
+
+                for row in cur.fetchall():
+                    emb = np.array(row[5], dtype=np.float32) if row[5] is not None else None
+                    node = Node(
+                        id=str(row[0]),
+                        tenant_id=row[1],
+                        classes=row[2],
+                        props=row[3],
+                        payload_ref=row[4],
+                        embedding=emb,
+                        metadata=row[6],
+                        refresh_policy=row[7],
+                        triggers=row[8],
+                        version=row[9],
+                        last_refreshed=row[10],
+                        drift_score=row[11],
+                    )
+                    vec_sim = float(row[12])
+                    ts_rank = float(row[13])
+                    max_ts_rank = max(max_ts_rank, ts_rank)
+                    candidates.append((node, vec_sim, ts_rank))
+
+                # DEBUG: Log raw candidates with their classes
+                self.logger.info(
+                    "hybrid_search raw candidates",
+                    extra_fields={
+                        "count": len(candidates),
+                        "classes": [node.classes for node, _, _ in candidates[:5]],  # First 5
+                    },
+                )
+
+                # Fuse scores: RRF (default) or weighted (fallback)
+                results: list[tuple[Node, float]] = []
+
+                rrf_enabled = os.getenv("HYBRID_RRF_ENABLED", "true").lower() == "true"
+                try:
+                    rrf_k = int(os.getenv("HYBRID_RRF_K", "60"))
+                except Exception:
+                    rrf_k = 60
+
+                if rrf_enabled and candidates:
+                    # Compute ranks for vec_sim and ts_rank
+                    # Higher is better, so sort descending
+                    # Build maps: node_id -> rank
+                    by_vec = sorted(
+                        ((i, v[1]) for i, v in enumerate(candidates)),
+                        key=lambda x: x[1],
+                        reverse=True,
+                    )
+                    by_txt = sorted(
+                        ((i, v[2]) for i, v in enumerate(candidates)),
+                        key=lambda x: x[1],
+                        reverse=True,
+                    )
+
+                    vec_rank: dict[int, int] = {}
+                    txt_rank: dict[int, int] = {}
+                    for r, (idx, _) in enumerate(by_vec, start=1):
+                        vec_rank[idx] = r
+                    for r, (idx, _) in enumerate(by_txt, start=1):
+                        txt_rank[idx] = r
+
+                    # RRF fusion: score = 1/(k + rank_vec) + 1/(k + rank_text)
+                    fused: list[tuple[Node, float]] = []
+                    for i, (node, _vec, _txt) in enumerate(candidates):
+                        rv = vec_rank.get(i, len(candidates))
+                        rt = txt_rank.get(i, len(candidates))
+                        rrf_score = (1.0 / (rrf_k + rv)) + (1.0 / (rrf_k + rt))
+                        fused.append((node, rrf_score))
+
+                    # Sort by fused score desc
+                    fused.sort(key=lambda x: x[1], reverse=True)
+                    results = fused
+                else:
+                    # Weighted fusion (fallback)
+                    for node, vec_sim, ts_rank in candidates:
+                        norm_ts_rank = ts_rank / max_ts_rank if max_ts_rank > 0 else 0.0
+                        hybrid_score = vector_weight * vec_sim + text_weight * norm_ts_rank
+                        results.append((node, hybrid_score))
+
+                # Log fusion mode
+                try:
+                    self.logger.info(
+                        "hybrid_search fusion",
+                        extra_fields={
+                            "mode": "rrf" if (rrf_enabled and candidates) else "weighted",
+                            "candidates": len(candidates),
+                        },
+                    )
+                except Exception:
+                    pass
+
+                # Sort by hybrid score
+                results.sort(key=lambda x: x[1], reverse=True)
+
+                # Apply cross-encoder reranking if enabled and beneficial
+                # Skip reranking if: disabled, no results, <3 candidates, or top score ≥ threshold (already confident)
+                # NOTE: Skip threshold only meaningful for cosine/weighted fusion (0.6-1.0 range).
+                # RRF scores are 0.01-0.04, so skip is disabled when RRF is active.
+                top_score = results[0][1] if results else 0.0
+                skip_high_conf = (not rrf_enabled) and (top_score >= rerank_skip_threshold)
+
+                # Adaptive reranking: if top score is uncertain, consider more candidates
+                # If we fetched base_candidates but top_score < adaptive_threshold, we may want more depth
+                # However, this requires re-query which is expensive. Instead, log for monitoring.
+                if use_reranker and top_score < adaptive_threshold:
+                    self.logger.info(
+                        "Low confidence query detected",
+                        extra_fields={
+                            "top_score": top_score,
+                            "threshold": adaptive_threshold,
+                            "recommend": "Consider HYBRID_RERANKER_BASE=40+",
+                        },
+                    )
+
+                if use_reranker and len(results) >= 3 and not skip_high_conf:
+                    # Rerank with optional budget guard
+                    budget_ms = None
+                    try:
+                        budget_ms = float(os.getenv("MAX_RERANK_BUDGET_MS", "0"))
+                    except Exception:
+                        budget_ms = None
+
+                    start = time.time()
+                    reranked = self._cross_encoder_rerank(query_text, results, top_k)
+                    duration_ms = (time.time() - start) * 1000.0
+
+                    if budget_ms and budget_ms > 0 and duration_ms > budget_ms:
+                        # Budget exceeded: fall back to pre-rerank ordering
+                        try:
+                            self.logger.info(
+                                "Rerank budget exceeded",
+                                extra_fields={
+                                    "duration_ms": round(duration_ms, 2),
+                                    "budget_ms": budget_ms,
+                                    "candidates": len(results),
+                                },
+                            )
+                        except Exception:
+                            pass
+                        out = results[:top_k]
+                    else:
+                        # Convert back to (node, hybrid_score) for API compatibility
+                        # Note: ordering is now by rerank_score, but we return hybrid_score
+                        out = [(node, hybrid_score) for node, hybrid_score, _ in reranked]
+                else:
+                    self.logger.info(
+                        "Skipping rerank",
+                        extra_fields={
+                            "use_reranker": use_reranker,
+                            "num_results": len(results),
+                            "skip_high_conf": skip_high_conf,
+                            "top_score": top_score,
+                        },
+                    )
+                    out = results[:top_k]
+
+                self.logger.info("hybrid_search results", extra_fields={"count": len(out)})
+                return out
+
+    def _cross_encoder_rerank(
+        self, query: str, candidates: list[tuple[Node, float]], top_k: int
+    ) -> list[tuple[Node, float, float]]:
+        """Rerank candidates using cross-encoder model.
+
+        Uses sentence-transformers cross-encoder for more accurate relevance scoring.
+        Preserves original hybrid_score for gating, adds rerank_score for ordering.
+
+        Args:
+            query: Query text
+            candidates: List of (node, hybrid_score) tuples to rerank
+            top_k: Number of top results to return
+
+        Returns:
+            Reranked list of (node, hybrid_score, rerank_score) tuples
+            where hybrid_score is preserved for thresholding and rerank_score is for ordering
+        """
+        try:
+            from sentence_transformers import CrossEncoder
+
+            # Lazy load cross-encoder (caches after first load)
+            if not hasattr(self, "_cross_encoder"):
+                self._cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+            # Prepare pairs for cross-encoder
+            pairs = []
+            for node, _ in candidates:
+                # Use title + text for reranking
+                doc_text = node.props.get("title", "") + " " + node.props.get("text", "")
+                pairs.append([query, doc_text[:512]])  # Limit to 512 chars
+
+            # Get cross-encoder scores (unbounded logits)
+            rerank_scores = self._cross_encoder.predict(pairs)
+
+            # Preserve hybrid_score, add rerank_score
+            reranked = [
+                (candidates[i][0], candidates[i][1], float(rerank_scores[i]))
+                for i in range(len(candidates))
+            ]
+
+            # Sort by rerank_score (ordering), keep hybrid_score (gating)
+            reranked.sort(key=lambda x: x[2], reverse=True)
+            return reranked[:top_k]
+
+        except ImportError:
+            self.logger.warning("sentence-transformers not installed, skipping reranking")
+            # Return with rerank_score = hybrid_score (no reranking)
+            return [(node, score, score) for node, score in candidates[:top_k]]
+        except Exception as e:
+            self.logger.error("Cross-encoder reranking failed", extra_fields={"error": str(e)})
+            # Return with rerank_score = hybrid_score (fallback)
+            return [(node, score, score) for node, score in candidates[:top_k]]
+
+    def write_embedding_history(
+        self,
+        node_id: str,
+        drift_score: float,
+        embedding_ref: str | None = None,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Record embedding update in history table.
+
+        RLS-aware: uses tenant-scoped connection when tenant_id is provided.
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO embedding_history (node_id, drift_score, embedding_ref) VALUES (%s, %s, %s)",
+                    (node_id, drift_score, embedding_ref),
+                )
+
+    def get_lineage(
+        self, node_id: str, max_depth: int = 5, tenant_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Recursively traverse DERIVED_FROM edges to build lineage graph.
+
+        Returns list of ancestors with metadata: [{id, classes, props, depth, edge_props}, ...]
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                # Recursive CTE to traverse lineage
+                cur.execute(
+                    """
+                    WITH RECURSIVE lineage AS (
+                        -- Base case: direct parents
+                        SELECT e.dst as node_id, 1 as depth, e.props as edge_props
+                        FROM edges e
+                        WHERE e.src = %s AND e.rel = 'DERIVED_FROM'
+
+                        UNION ALL
+
+                        -- Recursive case: parents of parents
+                        SELECT e.dst, l.depth + 1, e.props
+                        FROM edges e
+                        JOIN lineage l ON e.src = l.node_id
+                        WHERE e.rel = 'DERIVED_FROM' AND l.depth < %s
+                    )
+                    SELECT DISTINCT l.node_id, l.depth, l.edge_props,
+                           n.classes, n.props, n.created_at
+                    FROM lineage l
+                    JOIN nodes n ON l.node_id = n.id
+                    ORDER BY l.depth
+                    """,
+                    (node_id, max_depth),
+                )
+
+                return [
+                    {
+                        "id": str(row[0]),
+                        "depth": row[1],
+                        "edge_props": row[2],
+                        "classes": row[3],
+                        "props": row[4],
+                        "created_at": row[5].isoformat() if row[5] else None,
+                    }
+                    for row in cur.fetchall()
+                ]
+
+    def find_nodes_due_for_refresh(self, current_time: str | None = None) -> list[Node]:
+        """Find nodes due for refresh based on their refresh_policy.
+
+        Supports:
+        - interval: "1m", "5m", "1h", "1d" (minutes, hours, days)
+        - cron: standard cron expression (not yet implemented)
+        - last_refreshed comparison via metadata
+        """
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                # Query nodes with refresh_policy set
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, classes, props, payload_ref, embedding,
+                           metadata, refresh_policy, triggers, version,
+                           last_refreshed, drift_score
+                    FROM nodes
+                    WHERE refresh_policy IS NOT NULL
+                      AND refresh_policy != '{}'::jsonb
+                    """
+                )
+
+                out: list[Node] = []
+                for row in cur.fetchall():
+                    emb = np.array(row[5], dtype=np.float32) if row[5] is not None else None
+                    node = Node(
+                        id=str(row[0]),
+                        tenant_id=row[1],
+                        classes=row[2],
+                        props=row[3],
+                        payload_ref=row[4],
+                        embedding=emb,
+                        metadata=row[6],
+                        refresh_policy=row[7],
+                        triggers=row[8],
+                        version=row[9],
+                        last_refreshed=row[10],
+                        drift_score=row[11],
+                    )
+
+                    # Check if node is due for refresh
+                    if self._is_due_for_refresh(node):
+                        out.append(node)
+
+                return out
+
+    def _is_due_for_refresh(self, node: Node) -> bool:
+        """Check if a node is due for refresh based on its policy.
+
+        Uses explicit last_refreshed column (not metadata JSONB) for performance.
+
+        Supports two policy types:
+        1. Cron: {"cron": "*/5 * * * *"} - Standard cron expression (UTC)
+        2. Interval: {"interval": "5m"} - Simple interval (5m, 1h, 2d)
+
+        Precedence: cron > interval (cron takes priority if both present)
+        """
+        from datetime import datetime
+
+        policy = node.refresh_policy
+        if not policy:
+            return False
+
+        # Get last_refreshed from node (queried from DB column)
+        last_refreshed = getattr(node, "last_refreshed", None)
+
+        now = datetime.now(UTC)
+
+        # PRECEDENCE: cron > interval (with fallback)
+        # Parse cron policy: {"cron": "*/5 * * * *"}
+        if "cron" in policy:
+            try:
+                from croniter import croniter
+
+                cron_expr = policy["cron"]
+
+                # If never refreshed, it's due
+                if last_refreshed is None:
+                    return True
+
+                # Create croniter instance from last_refreshed
+                # croniter uses UTC by default when datetime has timezone
+                cron = croniter(cron_expr, last_refreshed)
+
+                # Get next scheduled run after last_refreshed
+                next_run = cron.get_next(datetime)
+
+                # Debug logging
+                self.logger.debug(
+                    f"Cron check: now={now}, last_refreshed={last_refreshed}, next_run={next_run}, is_due={now >= next_run}",
+                    extra_fields={"cron": cron_expr, "node_id": node.id},
+                )
+
+                # If current time is past next_run, it's due
+                return now >= next_run
+
+            except Exception as e:
+                self.logger.warning(
+                    f"Invalid cron expression, falling back to interval if present: {policy.get('cron')}",
+                    extra_fields={"error": str(e), "node_id": node.id},
+                )
+                # Fall through to interval check instead of returning False
+
+        # Parse interval policy: {"interval": "5m"} or {"interval": "1h"} or {"interval": "1d"}
+        if "interval" in policy:
+            interval_str = policy["interval"]
+
+            # Legacy support for 'minute'
+            if interval_str == "minute":
+                interval_seconds = 60
+            else:
+                # Parse format like "5m", "1h", "2d"
+                import re
+
+                match = re.match(r"^(\d+)([mhd])$", interval_str.lower())
+                if not match:
+                    self.logger.warning(f"Invalid interval format: {interval_str}")
+                    return False
+
+                value, unit = int(match.group(1)), match.group(2)
+                if unit == "m":
+                    interval_seconds = value * 60
+                elif unit == "h":
+                    interval_seconds = value * 3600
+                elif unit == "d":
+                    interval_seconds = value * 86400
+                else:
+                    return False
+
+            # Check if enough time has passed
+            if last_refreshed is None:
+                return True  # Never refreshed, so it's due
+
+            elapsed = (now - last_refreshed).total_seconds()
+            return elapsed >= interval_seconds
+
+        return False
+
+    def all_nodes(self) -> list[Node]:
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, classes, props, payload_ref, embedding, metadata,
+                           refresh_policy, triggers, version, last_refreshed, drift_score
+                    FROM nodes
+                    """
+                )
+                out: list[Node] = []
+                for row in cur.fetchall():
+                    emb = np.array(row[5], dtype=np.float32) if row[5] is not None else None
+                    out.append(
+                        Node(
+                            id=str(row[0]),
+                            tenant_id=row[1],
+                            classes=row[2],
+                            props=row[3],
+                            payload_ref=row[4],
+                            embedding=emb,
+                            metadata=row[6],
+                            refresh_policy=row[7],
+                            triggers=row[8],
+                            version=row[9],
+                            last_refreshed=row[10],
+                            drift_score=row[11],
+                        )
+                    )
+                return out
+
+    # --- Edges ---
+    def create_edge(self, edge: Edge) -> None:
+        with self._conn(tenant_id=edge.tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO edges (src, rel, dst, props, tenant_id) VALUES (%s, %s, %s, %s, %s)",
+                    (edge.src, edge.rel, edge.dst, json.dumps(edge.props), edge.tenant_id),
+                )
+
+    # --- Events ---
+    def append_event(
+        self,
+        node_id: str,
+        event_type: str,
+        payload: dict,
+        tenant_id: str | None = None,
+        actor_id: str | None = None,
+        actor_type: str | None = None,
+    ) -> str:
+        """Append event with audit trail support.
+
+        Args:
+            node_id: Node this event relates to
+            event_type: Type of event (refreshed, trigger_fired, etc.)
+            payload: Event data
+            tenant_id: Tenant ID for RLS
+            actor_id: Who triggered this (user ID, api key, 'scheduler', 'trigger')
+            actor_type: Type of actor (user, api_key, scheduler, trigger, system)
+
+        Returns:
+            Event ID
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO events (node_id, type, payload, tenant_id, actor_id, actor_type)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (node_id, event_type, json.dumps(payload), tenant_id, actor_id, actor_type),
+                )
+                event_id = cur.fetchone()[0]
+                return str(event_id)
+
+    # --- Payload loading ---
+    def load_payload_text(self, node: Node) -> str:
+        """Load payload text from various sources.
+
+        Supports:
+        - payload_ref starting with 's3://' -> fetch from S3
+        - payload_ref starting with 'file://' -> read from local file
+        - payload_ref starting with 'http://' or 'https://' -> fetch from URL
+        - props['text'] -> inline text
+        - Empty payload_ref -> use props['text'] or empty string
+        """
+        # Try payload_ref first
+        if node.payload_ref:
+            if node.payload_ref.startswith("s3://"):
+                return self._load_from_s3(node.payload_ref)
+            elif node.payload_ref.startswith("file://"):
+                return self._load_from_file(node.payload_ref[7:])  # Strip 'file://'
+            elif node.payload_ref.startswith(("http://", "https://")):
+                return self._load_from_url(node.payload_ref)
+            else:
+                # Assume local file path
+                return self._load_from_file(node.payload_ref)
+
+        # Fallback to inline text
+        return (node.props or {}).get("text", "")
+
+    def _load_from_file(self, file_path: str) -> str:
+        """Load text from local file."""
+        try:
+            import os
+
+            # Security: prevent path traversal
+            if ".." in file_path or file_path.startswith("/etc"):
+                self.logger.warning(f"Suspicious file path rejected: {file_path}")
+                return ""
+
+            if not os.path.exists(file_path):
+                self.logger.warning(f"File not found: {file_path}")
+                return ""
+
+            with open(file_path, encoding="utf-8", errors="ignore") as f:
+                return f.read()
+        except Exception as e:
+            self.logger.error(f"Failed to load file {file_path}: {e}")
+            return ""
+
+    def _load_from_s3(self, s3_uri: str) -> str:
+        """Load text from S3 bucket."""
+        try:
+            import boto3
+
+            # Parse s3://bucket/key
+            parts = s3_uri[5:].split("/", 1)
+            if len(parts) != 2:
+                self.logger.warning(f"Invalid S3 URI: {s3_uri}")
+                return ""
+
+            bucket, key = parts
+            s3_client = boto3.client("s3")
+            response = s3_client.get_object(Bucket=bucket, Key=key)
+            return response["Body"].read().decode("utf-8", errors="ignore")
+
+        except ImportError:
+            self.logger.warning("boto3 not installed, cannot load from S3")
+            return ""
+        except Exception as e:
+            self.logger.error(f"Failed to load from S3 {s3_uri}: {e}")
+            return ""
+
+    def _load_from_url(self, url: str) -> str:
+        """Load text from HTTP/HTTPS URL."""
+        try:
+            import requests
+
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            return response.text
+
+        except ImportError:
+            self.logger.warning("requests not installed, cannot load from URL")
+            return ""
+        except Exception as e:
+            self.logger.error(f"Failed to load from URL {url}: {e}")
+            return ""
+
+    # --- Anomaly Detection ---
+    def detect_drift_spikes(
+        self,
+        lookback_hours: int = 24,
+        spike_threshold: float = 2.0,
+        min_refreshes: int = 3,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Detect nodes with drift scores consistently above mean (drift spike anomaly).
+
+        A drift spike is when a node's drift score exceeds spike_threshold * mean_drift
+        for at least min_refreshes consecutive refreshes within the lookback window.
+
+        Args:
+            lookback_hours: Hours to look back in embedding_history
+            spike_threshold: Multiplier for mean drift (e.g., 2.0 = 2x mean)
+            min_refreshes: Minimum number of consecutive high-drift refreshes
+            tenant_id: Optional tenant ID for multi-tenancy filtering
+
+        Returns:
+            List of anomalies with node_id, recent_drift_scores, avg_drift, mean_drift
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                # Calculate mean drift across all nodes in the lookback window
+                cur.execute(
+                    """
+                    SELECT AVG(drift_score) as mean_drift
+                    FROM embedding_history
+                    WHERE created_at > NOW() - INTERVAL '%s hours'
+                    """,
+                    (lookback_hours,),
+                )
+                result = cur.fetchone()
+                mean_drift = (
+                    float(result[0]) if result and result[0] else 0.1
+                )  # Default to 0.1 if no data
+
+                spike_cutoff = mean_drift * spike_threshold
+
+                # Find nodes with consecutive high-drift refreshes
+                cur.execute(
+                    """
+                    WITH recent_history AS (
+                        SELECT
+                            node_id,
+                            drift_score,
+                            created_at,
+                            ROW_NUMBER() OVER (PARTITION BY node_id ORDER BY created_at DESC) as rn
+                        FROM embedding_history
+                        WHERE created_at > NOW() - INTERVAL '%s hours'
+                          AND drift_score > %s
+                    ),
+                    consecutive_spikes AS (
+                        SELECT
+                            node_id,
+                            COUNT(*) as spike_count,
+                            AVG(drift_score) as avg_drift,
+                            ARRAY_AGG(drift_score ORDER BY created_at DESC) as drift_scores
+                        FROM recent_history
+                        WHERE rn <= %s
+                        GROUP BY node_id
+                        HAVING COUNT(*) >= %s
+                    )
+                    SELECT
+                        cs.node_id,
+                        cs.spike_count,
+                        cs.avg_drift,
+                        cs.drift_scores,
+                        n.classes,
+                        n.props
+                    FROM consecutive_spikes cs
+                    JOIN nodes n ON cs.node_id = n.id
+                    ORDER BY cs.avg_drift DESC
+                    """,
+                    (lookback_hours, spike_cutoff, min_refreshes, min_refreshes),
+                )
+
+                anomalies = []
+                for row in cur.fetchall():
+                    anomalies.append(
+                        {
+                            "type": "drift_spike",
+                            "node_id": str(row[0]),
+                            "spike_count": row[1],
+                            "avg_drift": float(row[2]),
+                            "drift_scores": [float(d) for d in row[3]],
+                            "mean_drift": mean_drift,
+                            "spike_threshold": spike_threshold,
+                            "classes": row[4],
+                            "props": row[5],
+                        }
+                    )
+
+                return anomalies
+
+    def detect_trigger_storms(
+        self, lookback_hours: int = 1, event_threshold: int = 50, tenant_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Detect trigger storm anomalies (excessive trigger_fired events).
+
+        A trigger storm occurs when more than event_threshold trigger_fired events
+        occur within lookback_hours, indicating potential runaway triggers.
+
+        Args:
+            lookback_hours: Hours to look back in events table
+            event_threshold: Minimum number of trigger_fired events to flag as storm
+            tenant_id: Optional tenant ID for multi-tenancy filtering
+
+        Returns:
+            List of anomalies with node_id, event_count, recent_events
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    WITH trigger_counts AS (
+                        SELECT
+                            node_id,
+                            COUNT(*) as event_count,
+                            MIN(created_at) as first_event,
+                            MAX(created_at) as last_event,
+                            ARRAY_AGG(
+                                jsonb_build_object(
+                                    'type', type,
+                                    'created_at', created_at,
+                                    'payload', payload
+                                )
+                                ORDER BY created_at DESC
+                                LIMIT 10
+                            ) as recent_events
+                        FROM events
+                        WHERE created_at > NOW() - INTERVAL '%s hours'
+                          AND type = 'trigger_fired'
+                        GROUP BY node_id
+                        HAVING COUNT(*) > %s
+                    )
+                    SELECT
+                        tc.node_id,
+                        tc.event_count,
+                        tc.first_event,
+                        tc.last_event,
+                        tc.recent_events,
+                        n.classes,
+                        n.props
+                    FROM trigger_counts tc
+                    JOIN nodes n ON tc.node_id = n.id
+                    ORDER BY tc.event_count DESC
+                    """,
+                    (lookback_hours, event_threshold),
+                )
+
+                anomalies = []
+                for row in cur.fetchall():
+                    anomalies.append(
+                        {
+                            "type": "trigger_storm",
+                            "node_id": str(row[0]),
+                            "event_count": row[1],
+                            "first_event": row[2].isoformat() if row[2] else None,
+                            "last_event": row[3].isoformat() if row[3] else None,
+                            "recent_events": row[4][:10],  # Limit to 10 most recent
+                            "event_threshold": event_threshold,
+                            "classes": row[5],
+                            "props": row[6],
+                        }
+                    )
+
+                return anomalies
+
+    def detect_scheduler_lag(
+        self, lag_multiplier: float = 2.0, tenant_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Detect nodes overdue for refresh (scheduler lag anomaly).
+
+        A node is overdue if it hasn't been refreshed within lag_multiplier times
+        its scheduled refresh interval.
+
+        Args:
+            lag_multiplier: How many intervals past due (e.g., 2.0 = 2x late)
+            tenant_id: Optional tenant ID for multi-tenancy filtering
+
+        Returns:
+            List of anomalies with node_id, expected_interval, actual_lag, lag_ratio
+        """
+        from datetime import datetime
+
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                # Query all nodes with refresh_policy
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        classes,
+                        props,
+                        refresh_policy,
+                        last_refreshed
+                    FROM nodes
+                    WHERE refresh_policy IS NOT NULL
+                      AND refresh_policy != '{}'::jsonb
+                    """
+                )
+
+                anomalies = []
+                now = datetime.now(UTC)
+
+                for row in cur.fetchall():
+                    node_id = str(row[0])
+                    classes = row[1]
+                    props = row[2]
+                    policy = row[3]
+                    last_refreshed = row[4]
+
+                    # Calculate expected interval in seconds
+                    expected_interval_seconds = None
+
+                    if "interval" in policy:
+                        interval_str = policy["interval"]
+                        import re
+
+                        match = re.match(r"^(\d+)([mhd])$", interval_str.lower())
+                        if match:
+                            value, unit = int(match.group(1)), match.group(2)
+                            if unit == "m":
+                                expected_interval_seconds = value * 60
+                            elif unit == "h":
+                                expected_interval_seconds = value * 3600
+                            elif unit == "d":
+                                expected_interval_seconds = value * 86400
+
+                    elif "cron" in policy:
+                        # For cron, estimate interval from expression (rough heuristic)
+                        try:
+                            from croniter import croniter
+
+                            if last_refreshed:
+                                cron = croniter(policy["cron"], last_refreshed)
+                                next_run = cron.get_next(datetime)
+                                expected_interval_seconds = (
+                                    next_run - last_refreshed
+                                ).total_seconds()
+                        except Exception:
+                            pass
+
+                    # Check if overdue
+                    if expected_interval_seconds and last_refreshed:
+                        actual_lag_seconds = (now - last_refreshed).total_seconds()
+                        lag_ratio = actual_lag_seconds / expected_interval_seconds
+
+                        if lag_ratio >= lag_multiplier:
+                            anomalies.append(
+                                {
+                                    "type": "scheduler_lag",
+                                    "node_id": node_id,
+                                    "expected_interval_seconds": expected_interval_seconds,
+                                    "actual_lag_seconds": actual_lag_seconds,
+                                    "lag_ratio": round(lag_ratio, 2),
+                                    "lag_multiplier": lag_multiplier,
+                                    "last_refreshed": last_refreshed.isoformat(),
+                                    "classes": classes,
+                                    "props": props,
+                                }
+                            )
+
+                    elif not last_refreshed:
+                        # Never refreshed but has policy - definitely overdue
+                        anomalies.append(
+                            {
+                                "type": "scheduler_lag",
+                                "node_id": node_id,
+                                "expected_interval_seconds": expected_interval_seconds,
+                                "actual_lag_seconds": None,
+                                "lag_ratio": float("inf"),
+                                "lag_multiplier": lag_multiplier,
+                                "last_refreshed": None,
+                                "classes": classes,
+                                "props": props,
+                            }
+                        )
+
+                # Sort by lag_ratio descending (worst first)
+                anomalies.sort(key=lambda x: x["lag_ratio"], reverse=True)
+                return anomalies
+
+    def get_node_versions(
+        self, node_id: str, limit: int = 10, tenant_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Get embedding history versions for a node.
+
+        RLS-aware: uses tenant-scoped connection when tenant_id is provided.
+
+        Args:
+            node_id: Node ID to query
+            limit: Maximum number of versions to return (default: 10)
+            tenant_id: Tenant ID for RLS enforcement (optional)
+
+        Returns:
+            List of version records with drift_score, created_at, embedding_ref
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        drift_score,
+                        created_at,
+                        embedding_ref
+                    FROM embedding_history
+                    WHERE node_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (node_id, limit),
+                )
+
+                versions = []
+                for idx, row in enumerate(cur.fetchall()):
+                    versions.append(
+                        {
+                            "version_index": idx,  # Synthetic version ID based on order
+                            "drift_score": float(row[0]) if row[0] is not None else None,
+                            "created_at": row[1].isoformat() if row[1] else None,
+                            "embedding_ref": row[2],
+                        }
+                    )
+
+                return versions
+
+    def list_open_positions(
+        self,
+        role_terms: list[str] | None = None,
+        limit: int = 10,
+        tenant_id: str | None = None,
+    ) -> list[tuple[Node, float]]:
+        """Structured query for open job positions with role matching.
+
+        Uses class filtering + status check + BM25 text search for role terms.
+        Addresses Q5: "What ML engineer positions are open?"
+
+        Args:
+            role_terms: Optional role keywords (e.g., ["ml", "machine learning", "engineer"])
+            limit: Maximum results to return
+            tenant_id: Optional tenant ID for RLS
+
+        Returns:
+            List of (Node, relevance_score) tuples for open positions
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                # Build query based on whether role_terms are provided
+                # Be explicit to avoid ambiguous truth checks with numpy-like objects
+                normalized_terms: list[str] = []
+                if role_terms is not None:
+                    for t in role_terms:
+                        if isinstance(t, str):
+                            ts = t.strip()
+                            if ts:
+                                normalized_terms.append(ts)
+
+                if len(normalized_terms) > 0:
+                    # Use ts_rank for relevance when we have role terms
+                    role_query = " | ".join(normalized_terms)  # OR search in tsquery
+
+                    cur.execute(
+                        """
+                        SELECT
+                            id, tenant_id, classes, props, payload_ref, embedding,
+                            metadata, refresh_policy, triggers, version,
+                            last_refreshed, drift_score,
+                            ts_rank(text_search_vector, websearch_to_tsquery('english', %s)) as relevance
+                        FROM nodes
+                        WHERE classes @> ARRAY['Job']::text[]
+                          AND (
+                              (props->>'status' = 'open')
+                              OR (metadata->>'status' = 'open')
+                              OR (props->>'status' IS NULL AND metadata->>'status' IS NULL)
+                          )
+                          AND text_search_vector @@ websearch_to_tsquery('english', %s)
+                        ORDER BY relevance DESC, created_at DESC
+                        LIMIT %s
+                        """,
+                        (role_query, role_query, limit),
+                    )
+                else:
+                    # No role terms - just filter by class and status
+                    cur.execute(
+                        """
+                        SELECT
+                            id, tenant_id, classes, props, payload_ref, embedding,
+                            metadata, refresh_policy, triggers, version,
+                            last_refreshed, drift_score,
+                            1.0 as relevance
+                        FROM nodes
+                        WHERE classes @> ARRAY['Job']::text[]
+                          AND (
+                              (props->>'status' = 'open')
+                              OR (metadata->>'status' = 'open')
+                              OR (props->>'status' IS NULL AND metadata->>'status' IS NULL)
+                          )
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
+
+                results = []
+                for row in cur.fetchall():
+                    node = Node(
+                        id=str(row[0]),
+                        tenant_id=row[1],
+                        classes=row[2],
+                        props=row[3],
+                        payload_ref=row[4],
+                        embedding=np.array(row[5]) if row[5] is not None else None,
+                        metadata=row[6],
+                        refresh_policy=row[7],
+                        triggers=row[8],
+                        version=row[9],
+                        last_refreshed=row[10],
+                        drift_score=row[11],
+                    )
+                    score = float(row[12]) if row[12] else 1.0
+                    results.append((node, score))
+
+                return results
+
+    def list_performance_issues(
+        self, lookback_days: int = 30, limit: int = 10, tenant_id: str | None = None
+    ) -> list[tuple[Node, float]]:
+        """Structured query for performance-related issues/tickets.
+
+        Uses class filtering + performance keywords + recency.
+        Addresses Q8: "What are the main performance issues reported?"
+
+        Args:
+            lookback_days: Only return issues from last N days (default: 30)
+            limit: Maximum results to return
+            tenant_id: Optional tenant ID for RLS
+
+        Returns:
+            List of (Node, relevance_score) tuples for performance issues
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                # Performance-related keywords for text search
+                perf_query = "performance | slow | latency | timeout | bottleneck | degradation"
+
+                cur.execute(
+                    """
+                    SELECT
+                        id, tenant_id, classes, props, payload_ref, embedding,
+                        metadata, refresh_policy, triggers, version,
+                        last_refreshed, drift_score,
+                        ts_rank(text_search_vector, to_tsquery('english', %s)) as relevance
+                    FROM nodes
+                    WHERE (classes @> ARRAY['Ticket']::text[]
+                           OR classes @> ARRAY['Incident']::text[]
+                           OR classes @> ARRAY['Issue']::text[]
+                           OR classes @> ARRAY['Bug']::text[])
+                      AND text_search_vector @@ to_tsquery('english', %s)
+                      AND created_at >= NOW() - make_interval(days => %s)
+                    ORDER BY relevance DESC, created_at DESC
+                    LIMIT %s
+                    """,
+                    (perf_query, perf_query, lookback_days, limit),
+                )
+
+                results = []
+                for row in cur.fetchall():
+                    node = Node(
+                        id=str(row[0]),
+                        tenant_id=row[1],
+                        classes=row[2],
+                        props=row[3],
+                        payload_ref=row[4],
+                        embedding=np.array(row[5]) if row[5] is not None else None,
+                        metadata=row[6],
+                        refresh_policy=row[7],
+                        triggers=row[8],
+                        version=row[9],
+                        last_refreshed=row[10],
+                        drift_score=row[11],
+                    )
+                    score = float(row[12]) if row[12] else 1.0
+                    results.append((node, score))
+
+                return results
+
+    def purge_deleted_nodes(
+        self, tenant_id: str | None = None, batch_size: int = 500, dry_run: bool = False
+    ) -> dict:
+        """Permanently delete soft-deleted nodes past their grace period.
+
+        Deletes nodes with 'Deleted' class where deletion_grace_until < NOW().
+        Deletes chunks first (via parent_id), then parent documents.
+
+        Args:
+            tenant_id: Optional tenant ID for RLS-scoped purge
+            batch_size: Maximum number of nodes to purge per call (default: 500)
+            dry_run: If True, count candidates without deleting (default: False)
+
+        Returns:
+            Dict with purged_chunks, purged_parents counts
+
+        Safety:
+            - Uses RLS for tenant isolation
+            - Respects batch_size to avoid long locks
+            - Dry-run mode for preview
+        """
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                if dry_run:
+                    # Count candidates without deleting
+                    # Count chunks: nodes where parent has Deleted class and grace expired
+                    cur.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM nodes n
+                        INNER JOIN nodes p ON n.props->>'parent_id' = p.props->>'external_id'
+                        WHERE 'Deleted' = ANY(p.classes)
+                          AND (p.props->>'deletion_grace_until')::timestamptz < NOW()
+                        LIMIT %s
+                        """,
+                        (batch_size,),
+                    )
+                    chunk_count = cur.fetchone()[0] or 0
+
+                    # Count parents: nodes with Deleted class and grace expired
+                    cur.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM nodes p
+                        WHERE 'Deleted' = ANY(p.classes)
+                          AND (p.props->>'deletion_grace_until')::timestamptz < NOW()
+                        LIMIT %s
+                        """,
+                        (batch_size,),
+                    )
+                    parent_count = cur.fetchone()[0] or 0
+
+                    self.logger.info(
+                        "Purge dry-run complete",
+                        extra_fields={
+                            "chunk_candidates": chunk_count,
+                            "parent_candidates": parent_count,
+                            "tenant_id": tenant_id,
+                        },
+                    )
+
+                    return {
+                        "purged_chunks": chunk_count,
+                        "purged_parents": parent_count,
+                        "dry_run": True,
+                    }
+
+                # Actual purge: delete chunks first, then parents
+                # Step 1: Delete chunks whose parents are marked Deleted and past grace
+                cur.execute(
+                    """
+                    WITH to_delete AS (
+                        SELECT n.id
+                        FROM nodes n
+                        INNER JOIN nodes p ON n.props->>'parent_id' = p.props->>'external_id'
+                        WHERE 'Deleted' = ANY(p.classes)
+                          AND (p.props->>'deletion_grace_until')::timestamptz < NOW()
+                        LIMIT %s
+                    )
+                    DELETE FROM nodes
+                    WHERE id IN (SELECT id FROM to_delete)
+                    """,
+                    (batch_size,),
+                )
+                purged_chunks = cur.rowcount
+
+                # Step 2: Delete parent documents marked Deleted and past grace
+                cur.execute(
+                    """
+                    DELETE FROM nodes
+                    WHERE 'Deleted' = ANY(classes)
+                      AND (props->>'deletion_grace_until')::timestamptz < NOW()
+                    LIMIT %s
+                    """,
+                    (batch_size,),
+                )
+                purged_parents = cur.rowcount
+
+                self.logger.info(
+                    "Purge complete",
+                    extra_fields={
+                        "purged_chunks": purged_chunks,
+                        "purged_parents": purged_parents,
+                        "tenant_id": tenant_id,
+                        "batch_size": batch_size,
+                    },
+                )
+
+                return {
+                    "purged_chunks": purged_chunks,
+                    "purged_parents": purged_parents,
+                    "dry_run": False,
+                }

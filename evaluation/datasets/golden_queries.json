@@ -1,0 +1,112 @@
+[
+  {
+    "id": "job_search_ml_frameworks",
+    "query": "What ML frameworks does the Machine Learning Engineer position require?",
+    "intent": "entity_job",
+    "expected_classes": ["Job"],
+    "min_cited_nodes": 1,
+    "rrf": {
+      "min_gating_score": 0.015,
+      "max_gating_score": 0.10,
+      "expected_score_type": "rrf_fused"
+    },
+    "cosine": {
+      "min_gating_score": 0.20,
+      "max_gating_score": 1.0,
+      "expected_score_type": "cosine"
+    },
+    "description": "Core job search with specific skill requirements"
+  },
+  {
+    "id": "job_search_open_positions",
+    "query": "What open positions are available?",
+    "intent": "entity_job",
+    "expected_classes": ["Job"],
+    "min_cited_nodes": 1,
+    "rrf": {
+      "min_gating_score": 0.015,
+      "max_gating_score": 0.10,
+      "expected_score_type": "rrf_fused"
+    },
+    "cosine": {
+      "min_gating_score": 0.20,
+      "max_gating_score": 1.0,
+      "expected_score_type": "cosine"
+    },
+    "description": "General job listing query"
+  },
+  {
+    "id": "skill_requirements",
+    "query": "Python programming experience",
+    "intent": "general",
+    "expected_classes": ["Job"],
+    "min_cited_nodes": 0,
+    "rrf": {
+      "min_gating_score": 0.01,
+      "max_gating_score": 0.10,
+      "expected_score_type": "rrf_fused"
+    },
+    "cosine": {
+      "min_gating_score": 0.15,
+      "max_gating_score": 1.0,
+      "expected_score_type": "cosine"
+    },
+    "description": "Skill-based search without explicit job intent"
+  },
+  {
+    "id": "location_query",
+    "query": "Remote work opportunities",
+    "intent": "general",
+    "expected_classes": ["Job"],
+    "min_cited_nodes": 0,
+    "rrf": {
+      "min_gating_score": 0.01,
+      "max_gating_score": 0.10,
+      "expected_score_type": "rrf_fused"
+    },
+    "cosine": {
+      "min_gating_score": 0.15,
+      "max_gating_score": 1.0,
+      "expected_score_type": "cosine"
+    },
+    "description": "Location/work arrangement query"
+  },
+  {
+    "id": "irrelevant_query",
+    "query": "What is the weather like on Mars?",
+    "intent": "general",
+    "expected_classes": [],
+    "min_cited_nodes": 0,
+    "rrf": {
+      "min_gating_score": 0.0,
+      "max_gating_score": 0.02,
+      "expected_score_type": "rrf_fused",
+      "expect_rejection": true
+    },
+    "cosine": {
+      "min_gating_score": 0.0,
+      "max_gating_score": 0.25,
+      "expected_score_type": "cosine",
+      "expect_rejection": true
+    },
+    "description": "Completely irrelevant query (should be rejected or return no results)"
+  },
+  {
+    "id": "specific_role_search",
+    "query": "Senior Software Engineer with 5 years experience",
+    "intent": "entity_job",
+    "expected_classes": ["Job"],
+    "min_cited_nodes": 0,
+    "rrf": {
+      "min_gating_score": 0.015,
+      "max_gating_score": 0.10,
+      "expected_score_type": "rrf_fused"
+    },
+    "cosine": {
+      "min_gating_score": 0.20,
+      "max_gating_score": 1.0,
+      "expected_score_type": "cosine"
+    },
+    "description": "Specific role with experience requirement"
+  }
+]

@@ -1,0 +1,193 @@
+# Alertmanager Configuration for Active Graph KG Connector Alerts
+#
+# This configuration provides:
+# - Grouping by alertname/provider to prevent per-tenant notification storms
+# - Critical alerts routed to PagerDuty with 1h repeat
+# - Warning alerts routed to Slack with 2h repeat
+# - Inhibition rules to suppress warnings when critical alerts fire
+# - Provider/tenant labels included in all notifications
+# - Runbook URLs for incident response
+
+global:
+  resolve_timeout: 5m
+  # Optional: configure external labels for cluster identification
+  # external_labels:
+  #   cluster: 'production'
+  #   region: 'us-east-1'
+
+# Main routing tree
+route:
+  receiver: default
+  group_by: ['alertname', 'provider']   # Prevent per-tenant notification storms
+  group_wait: 30s                        # Wait 30s to batch initial alerts
+  group_interval: 5m                     # Wait 5m before sending new alerts in existing group
+  repeat_interval: 2h                    # Re-notify every 2h if alert still firing
+
+  routes:
+    # Critical alerts → PagerDuty (shorter repeat interval)
+    - matchers:
+        - severity="critical"
+      receiver: pagerduty
+      group_by: ['alertname', 'provider', 'tenant']
+      repeat_interval: 1h
+
+    # Warning alerts → Slack
+    - matchers:
+        - severity="warning"
+      receiver: slack
+      group_by: ['alertname', 'provider']
+      repeat_interval: 2h
+
+    # Provider-specific routing (optional)
+    # Uncomment to route specific provider alerts to dedicated teams
+    # - matchers:
+    #     - provider="gcs"
+    #   receiver: gcs-team
+    # - matchers:
+    #     - provider="s3"
+    #   receiver: s3-team
+
+# Receiver definitions
+receivers:
+  # Default receiver (catches unmatched alerts)
+  - name: default
+    slack_configs:
+      - send_resolved: true
+        channel: '#ops-notifications'
+        api_url: '${SLACK_WEBHOOK_URL}'  # Set via environment variable
+        title: '{{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+        title_link: '{{ .CommonAnnotations.runbook_url }}'
+        text: |
+          {{ range .Alerts }}
+          • *{{ .Annotations.summary }}*
+            Provider: `{{ .Labels.provider | default "n/a" }}`
+            Tenant: `{{ .Labels.tenant | default "n/a" }}`
+            Description: {{ .Annotations.description }}
+            Runbook: {{ .Annotations.runbook_url }}
+          {{ end }}
+        actions:
+          - type: button
+            text: 'View Runbook'
+            url: '{{ .CommonAnnotations.runbook_url }}'
+          - type: button
+            text: 'Silence 1h'
+            url: '{{ .ExternalURL }}/#/silences/new?filter=%7Balertname%3D%22{{ .CommonLabels.alertname }}%22%7D'
+
+  # Slack receiver for warning alerts
+  - name: slack
+    slack_configs:
+      - send_resolved: true
+        channel: '#ops-alerts'
+        api_url: '${SLACK_WEBHOOK_URL}'
+        title: '⚠️  {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+        title_link: '{{ .CommonAnnotations.runbook_url }}'
+        color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+        text: |
+          {{ range .Alerts }}
+          • *{{ .Annotations.summary }}*
+            Provider: `{{ .Labels.provider | default "n/a" }}`
+            Tenant: `{{ .Labels.tenant | default "n/a" }}`
+            Description: {{ .Annotations.description }}
+            Runbook: {{ .Annotations.runbook_url }}
+          {{ end }}
+        actions:
+          - type: button
+            text: 'View Runbook'
+            url: '{{ .CommonAnnotations.runbook_url }}'
+          - type: button
+            text: 'View in Grafana'
+            url: 'http://grafana:3000/d/connector-queues?var-provider={{ .CommonLabels.provider }}&var-tenant={{ .CommonLabels.tenant }}'
+          - type: button
+            text: 'Silence 2h'
+            url: '{{ .ExternalURL }}/#/silences/new?filter=%7Balertname%3D%22{{ .CommonLabels.alertname }}%22%7D'
+
+  # PagerDuty receiver for critical alerts
+  - name: pagerduty
+    pagerduty_configs:
+      - routing_key: '${PAGERDUTY_ROUTING_KEY}'  # Set via environment variable
+        description: '{{ .CommonLabels.alertname }} - {{ .CommonLabels.provider }}'
+        severity: '{{ .CommonLabels.severity | default "critical" }}'
+        client: 'Active Graph KG Alertmanager'
+        client_url: '{{ .ExternalURL }}'
+        details:
+          tenant: '{{ .CommonLabels.tenant }}'
+          provider: '{{ .CommonLabels.provider }}'
+          summary: '{{ .CommonAnnotations.summary }}'
+          description: '{{ .CommonAnnotations.description }}'
+          runbook: '{{ .CommonAnnotations.runbook_url }}'
+          firing_alerts: '{{ len .Alerts.Firing }}'
+          resolved_alerts: '{{ len .Alerts.Resolved }}'
+        links:
+          - href: '{{ .CommonAnnotations.runbook_url }}'
+            text: 'Runbook'
+          - href: 'http://grafana:3000/d/connector-queues?var-provider={{ .CommonLabels.provider }}&var-tenant={{ .CommonLabels.tenant }}'
+            text: 'Grafana Dashboard'
+
+  # Optional: Provider-specific team receivers
+  # - name: gcs-team
+  #   slack_configs:
+  #     - send_resolved: true
+  #       channel: '#team-gcs'
+  #       api_url: '${SLACK_WEBHOOK_URL}'
+  #       title: 'GCS Connector: {{ .CommonLabels.alertname }}'
+  #       text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+  # - name: s3-team
+  #   slack_configs:
+  #     - send_resolved: true
+  #       channel: '#team-s3'
+  #       api_url: '${SLACK_WEBHOOK_URL}'
+  #       title: 'S3 Connector: {{ .CommonLabels.alertname }}'
+  #       text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+# Inhibition rules: suppress lower-severity alerts when higher-severity fires
+inhibit_rules:
+  # Suppress warning alerts when critical alert of same name/provider is firing
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: ['alertname', 'provider']
+
+  # Suppress ConnectorQueueDepthHigh when ConnectorQueueDepthCritical fires
+  - source_matchers:
+      - alertname="ConnectorQueueDepthCritical"
+    target_matchers:
+      - alertname="ConnectorQueueDepthHigh"
+    equal: ['provider', 'tenant']
+
+# Time intervals for maintenance windows (optional)
+# time_intervals:
+#   - name: business-hours
+#     time_intervals:
+#       - times:
+#           - start_time: '09:00'
+#             end_time: '17:00'
+#         weekdays: ['monday:friday']
+#
+#   - name: off-hours
+#     time_intervals:
+#       - times:
+#           - start_time: '17:00'
+#             end_time: '09:00'
+#       - weekdays: ['saturday', 'sunday']
+
+# Usage:
+# 1. Set environment variables:
+#    export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+#    export PAGERDUTY_ROUTING_KEY="YOUR_PAGERDUTY_INTEGRATION_KEY"
+#
+# 2. Start Alertmanager:
+#    alertmanager --config.file=observability/alertmanager.yml
+#
+# 3. Verify configuration:
+#    amtool check-config observability/alertmanager.yml
+#
+# 4. Test Slack receiver:
+#    amtool alert add test_alert severity=warning provider=gcs tenant=default \
+#      --alertmanager.url=http://localhost:9093
+#
+# 5. Silence alerts during maintenance:
+#    amtool silence add alertname=~".*" provider="gcs" \
+#      --duration=2h --comment="GCS maintenance window" \
+#      --alertmanager.url=http://localhost:9093

@@ -1,0 +1,271 @@
+# Prometheus Alerting Rules for Active Graph KG Connectors
+# Load this file in Prometheus with: --config.file=/path/to/prometheus.yml
+# Reference in prometheus.yml:
+#   rule_files:
+#     - "observability/alerts/connector_alerts.yml"
+#
+# These alerts trigger on metrics emitted by the connector system.
+# Thresholds are production defaults; tune in staging based on observed patterns.
+
+groups:
+  - name: connector-alerts
+    rules:
+      # ========================================
+      # WEBHOOK ALERTS
+      # ========================================
+
+      # GCS Pub/Sub webhook verification failures
+      - alert: WebhookPubSubVerificationFailuresHigh
+        expr: |
+          sum(rate(webhook_pubsub_verify_total{result!~"secret_ok|oidc_ok|skipped"}[5m]))
+          /
+          clamp_min(sum(rate(webhook_pubsub_verify_total[5m])), 1) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High GCS Pub/Sub webhook verification failures"
+          description: "More than 10% of GCS Pub/Sub webhook verifications are failing in the last 5m."
+          runbook_url: "docs/operations/OPERATIONS.md#webhook-troubleshooting"
+
+      # AWS SNS webhook verification failures
+      - alert: WebhookSnsVerificationFailuresHigh
+        expr: |
+          sum(rate(webhook_sns_verify_total{result!~"success|skipped"}[5m]))
+          /
+          clamp_min(sum(rate(webhook_sns_verify_total[5m])), 1) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High SNS webhook verification failures"
+          description: "More than 10% of SNS webhook verifications are failing in the last 5m."
+          runbook_url: "docs/operations/OPERATIONS.md#webhook-troubleshooting"
+
+      # Topic allowlist rejections (SNS/PubSub topic mismatches)
+      - alert: WebhookTopicRejected
+        expr: increase(webhook_topic_rejected_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Webhook topic rejected"
+          description: "Incoming webhook topic did not match tenant allowlist for provider={{ $labels.provider }}, tenant={{ $labels.tenant }}."
+          runbook_url: "docs/operations/OPERATIONS.md#webhook-troubleshooting"
+
+      # Webhook rate limiting (429 responses)
+      - alert: WebhookRateLimitingHigh
+        expr: increase(api_rate_limited_total{endpoint=~"webhook_.*"}[10m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High webhook rate limiting"
+          description: "More than 100 webhook requests rate-limited (HTTP 429) in the last 10m for endpoint={{ $labels.endpoint }}."
+          runbook_url: "docs/operations/OPERATIONS.md#webhook-troubleshooting"
+
+      # ========================================
+      # QUEUE AND WORKER ALERTS
+      # ========================================
+
+      # Worker queue backlog (by provider/tenant) - Warning threshold
+      - alert: ConnectorQueueDepthHigh
+        expr: max by (provider, tenant) (max_over_time(connector_worker_queue_depth[10m])) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connector queue backlog is high"
+          description: "Queue depth exceeded 1000 for provider={{ $labels.provider }}, tenant={{ $labels.tenant }} in the last 10m."
+          runbook_url: "docs/operations/OPERATIONS.md#worker-troubleshooting"
+
+      # Worker queue backlog - Critical threshold
+      - alert: ConnectorQueueDepthCritical
+        expr: max by (provider, tenant) (max_over_time(connector_worker_queue_depth[10m])) > 5000
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Connector queue backlog is critical"
+          description: "Queue depth exceeded 5000 for provider={{ $labels.provider }}, tenant={{ $labels.tenant }} in the last 10m. Immediate scaling required."
+          runbook_url: "docs/operations/OPERATIONS.md#worker-troubleshooting"
+
+      # ========================================
+      # INGESTION ALERTS
+      # ========================================
+
+      # Ingestion error rate > 1% (per provider)
+      - alert: IngestErrorRateHigh
+        expr: |
+          sum by (provider) (rate(connector_ingest_errors_total[10m]))
+          /
+          clamp_min(sum by (provider) (rate(connector_ingest_total[10m])), 1) > 0.01
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High ingestion error rate"
+          description: "Error rate >1% for provider={{ $labels.provider }} over the last 10 minutes."
+          runbook_url: "docs/operations/OPERATIONS.md#ingestion-troubleshooting"
+
+      # Ingestion stalled (per provider, 60m window to reduce noise)
+      - alert: IngestStalled
+        expr: sum by (provider) (rate(connector_ingest_total[60m])) == 0
+        for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ingestion stalled"
+          description: "No connector ingestion activity for provider={{ $labels.provider }} in the last 60 minutes."
+          runbook_url: "docs/operations/OPERATIONS.md#ingestion-troubleshooting"
+
+      # ========================================
+      # DLQ (DEAD LETTER QUEUE) ALERTS
+      # ========================================
+
+      # DLQ depth exceeds threshold
+      - alert: ConnectorDLQDepthHigh
+        expr: max(connector_dlq_depth) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connector DLQ depth high"
+          description: "DLQ depth exceeded 100 items. Persistent failures detected."
+          runbook_url: "docs/operations/OPERATIONS.md#ingestion-troubleshooting"
+
+      # DLQ receiving new failures
+      - alert: ConnectorDLQFlowDetected
+        expr: increase(connector_dlq_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connector DLQ receiving failures"
+          description: "New items added to DLQ in the last 10m. Check for persistent connector errors."
+          runbook_url: "docs/operations/OPERATIONS.md#ingestion-troubleshooting"
+
+      # ========================================
+      # PURGER ALERTS
+      # ========================================
+
+      # Purger errors
+      - alert: PurgerErrors
+        expr: increase(connector_purger_total{result="error"}[30m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Purger encountered errors"
+          description: "Soft-delete purger reported errors in the last 30m."
+          runbook_url: "docs/operations/OPERATIONS.md#purger"
+
+      # ========================================
+      # SUBSCRIBER HEALTH ALERTS
+      # ========================================
+
+      # Pub/Sub reconnect spikes (may indicate connectivity issues)
+      - alert: PubSubReconnectsHigh
+        expr: increase(connector_pubsub_reconnect_total[15m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Webhook subscriber reconnects are high"
+          description: "Subscriber had more than 5 reconnects in the last 15 minutes."
+          runbook_url: "docs/operations/OPERATIONS.md#cache-subscriber"
+
+      # Cache subscriber stale (no messages in 5 minutes during known traffic)
+      # NOTE: Only enable if you emit last_message_age_seconds metric
+      # - alert: CacheSubscriberStale
+      #   expr: max(connector_last_message_age_seconds) > 300
+      #   for: 5m
+      #   labels:
+      #     severity: warning
+      #   annotations:
+      #     summary: "Cache subscriber not receiving messages"
+      #     description: "No cache invalidation messages received in the last 5 minutes."
+      #     runbook_url: "docs/operations/OPERATIONS.md#cache-subscriber"
+
+      # ========================================
+      # KEY ROTATION AND ENCRYPTION ALERTS
+      # ========================================
+
+      # Rotation errors
+      - alert: RotationErrors
+        expr: increase(connector_rotation_total{result="error"}[30m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connector key rotation errors"
+          description: "Key rotation has errors; check DLQ and retry affected rows."
+          runbook_url: "docs/operations/OPERATIONS.md#key-rotation"
+
+      # Decrypt failures (encryption layer)
+      - alert: ConfigDecryptFailures
+        expr: increase(connector_decrypt_failures_total[30m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Config decryption failures"
+          description: "Connector config decryption failed; verify KEKs and key_version. Metric: connector_decrypt_failures_total (encryption.py:233)"
+          runbook_url: "docs/operations/OPERATIONS.md#key-rotation"
+
+      # ========================================
+      # CONNECTOR POLLER ALERTS
+      # ========================================
+
+      # High error rate in Drive poller
+      - alert: ConnectorPollerErrorRateHigh
+        expr: |
+          sum by (provider, tenant) (rate(connector_poller_errors_total[10m]))
+          /
+          clamp_min(sum by (provider, tenant) (rate(connector_poller_runs_total[10m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High connector poller error rate"
+          description: "Error rate >5% for provider={{ $labels.provider }}, tenant={{ $labels.tenant }} over the last 10 minutes."
+          runbook_url: "docs/DRIVE_CONNECTOR.md#troubleshooting"
+
+      # Slow polling detected (p95 latency > 30s)
+      - alert: ConnectorPollerLatencyHigh
+        expr: |
+          histogram_quantile(0.95, sum by (provider, tenant, le) (rate(connector_poller_latency_seconds_bucket[10m]))) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connector poller latency high"
+          description: "p95 polling latency exceeded 30s for provider={{ $labels.provider }}, tenant={{ $labels.tenant }} over the last 10 minutes."
+          runbook_url: "docs/DRIVE_CONNECTOR.md#performance-tuning"
+
+      # ========================================
+      # QUOTA ALERTS (OPTIONAL)
+      # NOTE: Enable these if you export quota usage gauges
+      # ========================================
+
+      # Quota usage warning (80%)
+      # - alert: ConnectorQuotaUsageHigh
+      #   expr: max by (tenant) (connector_quota_usage_ratio) > 0.8
+      #   for: 15m
+      #   labels:
+      #     severity: warning
+      #   annotations:
+      #     summary: "Connector quota usage high"
+      #     description: "Quota usage for tenant={{ $labels.tenant }} exceeded 80%."
+      #     runbook_url: "docs/operations/OPERATIONS.md#quotas"
+
+      # Quota usage critical (100%)
+      # - alert: ConnectorQuotaExceeded
+      #   expr: max by (tenant) (connector_quota_usage_ratio) >= 1.0
+      #   for: 5m
+      #   labels:
+      #     severity: critical
+      #   annotations:
+      #     summary: "Connector quota exceeded"
+      #     description: "Quota usage for tenant={{ $labels.tenant }} at or above 100%. New ingestion may be blocked."
+      #     runbook_url: "docs/operations/OPERATIONS.md#quotas"

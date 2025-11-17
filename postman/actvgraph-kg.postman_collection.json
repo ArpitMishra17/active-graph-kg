@@ -1,0 +1,102 @@
+{
+  "info": {
+    "name": "actvgraph-kg API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Postman collection for actvgraph-kg (health, nodes, search, triggers, lineage, events, ask)."
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {"method": "GET", "url": "{{base_url}}/health"}
+    },
+    {
+      "name": "Create Node",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "{{base_url}}/nodes",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"classes\": [\"Document\"],\n  \"props\": {\"text\": \"Machine learning fundamentals\", \"category\": \"AI\"},\n  \"refresh_policy\": {\"interval\": \"5m\", \"drift_threshold\": 0.1}\n}"
+        }
+      }
+    },
+    {
+      "name": "Search (vector)",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "{{base_url}}/search",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"artificial intelligence\",\n  \"top_k\": 10\n}"
+        }
+      }
+    },
+    {
+      "name": "Search (weighted)",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "{{base_url}}/search",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"machine learning optimization techniques\",\n  \"top_k\": 5,\n  \"use_weighted_score\": true,\n  \"decay_lambda\": 0.01,\n  \"drift_beta\": 0.1\n}"
+        }
+      }
+    },
+    {
+      "name": "Ask (Q&A)",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "{{base_url}}/ask",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"What vector databases are discussed?\",\n  \"max_results\": 3\n}"
+        }
+      }
+    },
+    {
+      "name": "Register Trigger",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "{{base_url}}/triggers",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"fraud_alert\",\n  \"example_text\": \"suspicious wire transfer to offshore account\",\n  \"description\": \"Detects potential fraud patterns\"\n}"
+        }
+      }
+    },
+    {
+      "name": "List Triggers",
+      "request": {"method": "GET", "url": "{{base_url}}/triggers"}
+    },
+    {
+      "name": "Create Edge (DERIVED_FROM)",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "{{base_url}}/edges",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"src\": \"<child-node-id>\",\n  \"rel\": \"DERIVED_FROM\",\n  \"dst\": \"<parent-node-id>\",\n  \"props\": {\"transform\": \"summarize\", \"confidence\": 0.95}\n}"
+        }
+      }
+    },
+    {
+      "name": "Lineage",
+      "request": {"method": "GET", "url": "{{base_url}}/lineage/{{node_id}}?max_depth=5"}
+    },
+    {
+      "name": "Events",
+      "request": {"method": "GET", "url": "{{base_url}}/events?limit=20"}
+    }
+  ],
+  "variable": [
+    {"key": "base_url", "value": "http://localhost:8000"},
+    {"key": "node_id", "value": "<node-id>"}
+  ]
+}
+

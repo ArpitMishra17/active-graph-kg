@@ -1,0 +1,328 @@
+{
+  "dashboard": {
+    "title": "Active Graph KG - Connector Queue Details",
+    "tags": ["activekg", "connectors", "queues"],
+    "timezone": "utc",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "10s",
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "provider",
+          "type": "query",
+          "datasource": "Prometheus",
+          "query": "label_values(connector_worker_queue_depth, provider)",
+          "current": {
+            "text": "All",
+            "value": "$__all"
+          },
+          "includeAll": true,
+          "multi": true,
+          "refresh": 1
+        },
+        {
+          "name": "tenant",
+          "type": "query",
+          "datasource": "Prometheus",
+          "query": "label_values(connector_worker_queue_depth{provider=~\"$provider\"}, tenant)",
+          "current": {
+            "text": "All",
+            "value": "$__all"
+          },
+          "includeAll": true,
+          "multi": true,
+          "refresh": 1
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Queue Depth Over Time",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 0, "w": 24, "h": 10},
+        "targets": [
+          {
+            "expr": "connector_worker_queue_depth{provider=~\"$provider\", tenant=~\"$tenant\"}",
+            "legendFormat": "{{provider}}/{{tenant}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "spanNulls": true
+            }
+          }
+        },
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "right",
+            "showLegend": true,
+            "calcs": ["last", "max", "mean"]
+          },
+          "tooltip": {"mode": "multi"}
+        }
+      },
+      {
+        "id": 2,
+        "title": "Current Queue Depth by Provider/Tenant",
+        "type": "table",
+        "gridPos": {"x": 0, "y": 10, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "connector_worker_queue_depth{provider=~\"$provider\", tenant=~\"$tenant\"}",
+            "format": "table",
+            "instant": true,
+            "refId": "A"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "Time": true,
+                "__name__": true
+              },
+              "renameByName": {
+                "provider": "Provider",
+                "tenant": "Tenant",
+                "Value": "Queue Depth"
+              }
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "left",
+              "displayMode": "auto"
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "Queue Depth"},
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      {"value": 0, "color": "green"},
+                      {"value": 500, "color": "yellow"},
+                      {"value": 1000, "color": "red"}
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 3,
+        "title": "Worker Processing Rate (docs/sec)",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 10, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(connector_ingest_total{provider=~\"$provider\", tenant=~\"$tenant\"}[5m])) by (provider)",
+            "legendFormat": "{{provider}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": {"mode": "palette-classic"}
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Ingestion Errors by Provider",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 18, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(connector_ingest_errors_total{provider=~\"$provider\", tenant=~\"$tenant\"}[5m])) by (provider, error_type)",
+            "legendFormat": "{{provider}} - {{error_type}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": {"mode": "palette-classic"}
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Processing Latency Heatmap",
+        "type": "heatmap",
+        "gridPos": {"x": 12, "y": 18, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(connector_worker_process_duration_bucket{provider=~\"$provider\", tenant=~\"$tenant\"}[5m])) by (le)",
+            "format": "heatmap",
+            "legendFormat": "{{le}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "hideFrom": {
+                "tooltip": false,
+                "viz": false,
+                "legend": false
+              }
+            }
+          }
+        },
+        "options": {
+          "calculate": false,
+          "cellGap": 2,
+          "color": {
+            "scheme": "Spectral",
+            "fill": "dark-orange",
+            "reverse": false,
+            "exponent": 0.5,
+            "steps": 64
+          },
+          "yAxis": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Recent Webhook Events",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 26, "w": 24, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(webhook_pubsub_verify_total{result=~\"secret_ok|oidc_ok\"}[1m])) by (provider)",
+            "legendFormat": "{{provider}} - Verified",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(webhook_pubsub_verify_total{result!~\"secret_ok|oidc_ok|skipped\"}[1m])) by (provider)",
+            "legendFormat": "{{provider}} - Failed",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "color": {"mode": "palette-classic"}
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Documents Ingested (24h Rolling)",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 34, "w": 8, "h": 6},
+        "targets": [
+          {
+            "expr": "sum(increase(connector_ingest_total{provider=~\"$provider\", tenant=~\"$tenant\"}[24h])) or vector(0)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "blue"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Errors (Last Hour)",
+        "type": "stat",
+        "gridPos": {"x": 8, "y": 34, "w": 8, "h": 6},
+        "targets": [
+          {
+            "expr": "sum(increase(connector_ingest_errors_total{provider=~\"$provider\", tenant=~\"$tenant\"}[1h])) or vector(0)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 1, "color": "yellow"},
+                {"value": 10, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Max Queue Depth (Last Hour)",
+        "type": "stat",
+        "gridPos": {"x": 16, "y": 34, "w": 8, "h": 6},
+        "targets": [
+          {
+            "expr": "max(max_over_time(connector_worker_queue_depth{provider=~\"$provider\", tenant=~\"$tenant\"}[1h])) or vector(0)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 500, "color": "yellow"},
+                {"value": 1000, "color": "red"}
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "annotations": {
+      "list": [
+        {
+          "name": "Alerts Firing",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "ALERTS{alertstate=\"firing\", alertname=~\".*Connector.*|.*Ingest.*|.*Webhook.*\"}",
+          "iconColor": "red",
+          "tagKeys": "alertname,severity"
+        }
+      ]
+    }
+  }
+}

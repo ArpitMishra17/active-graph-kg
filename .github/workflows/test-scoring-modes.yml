@@ -1,0 +1,199 @@
+name: Test Scoring Modes
+
+on:
+  push:
+    branches: [ main, dev, feat/* ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  test-scoring-modes:
+    name: Test ${{ matrix.mode }} mode (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+        mode: ["rrf", "cosine"]
+      fail-fast: false
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: activekg
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-asyncio
+
+      - name: Set up database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          # Enable pgvector extension
+          psql -h localhost -U postgres -d activekg -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          psql -h localhost -U postgres -d activekg -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+          # Run schema migrations if needed
+          # python scripts/init_db.py || true
+
+      - name: Configure RRF mode
+        if: matrix.mode == 'rrf'
+        run: |
+          echo "HYBRID_RRF_ENABLED=true" >> $GITHUB_ENV
+          echo "RRF_LOW_SIM_THRESHOLD=0.01" >> $GITHUB_ENV
+          echo "ASK_SIM_THRESHOLD=0.01" >> $GITHUB_ENV
+          echo "HYBRID_RRF_K=60" >> $GITHUB_ENV
+          echo "HYBRID_RERANKER_BASE=20" >> $GITHUB_ENV
+          echo "HYBRID_RERANKER_BOOST=45" >> $GITHUB_ENV
+          echo "HYBRID_ADAPTIVE_THRESHOLD=0.55" >> $GITHUB_ENV
+          echo "MAX_RERANK_BUDGET_MS=250" >> $GITHUB_ENV
+
+      - name: Configure cosine mode
+        if: matrix.mode == 'cosine'
+        run: |
+          echo "HYBRID_RRF_ENABLED=false" >> $GITHUB_ENV
+          echo "RAW_LOW_SIM_THRESHOLD=0.15" >> $GITHUB_ENV
+          echo "ASK_SIM_THRESHOLD=0.20" >> $GITHUB_ENV
+          echo "RERANK_SKIP_TOPSIM=0.80" >> $GITHUB_ENV
+
+      - name: Set common environment
+        run: |
+          echo "ACTIVEKG_DSN=postgresql://postgres:postgres@localhost:5432/activekg" >> $GITHUB_ENV
+          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" >> $GITHUB_ENV
+          echo "JWT_ENABLED=false" >> $GITHUB_ENV
+          echo "RATE_LIMIT_ENABLED=false" >> $GITHUB_ENV
+          echo "LLM_ENABLED=true" >> $GITHUB_ENV
+          echo "LLM_BACKEND=groq" >> $GITHUB_ENV
+          echo "LLM_MODEL=llama-3.1-8b-instant" >> $GITHUB_ENV
+          echo "RUN_SCHEDULER=false" >> $GITHUB_ENV
+          echo "AUTO_EMBED_ON_CREATE=true" >> $GITHUB_ENV
+          echo "ACTIVEKG_DEV_TENANT=default" >> $GITHUB_ENV
+          echo "PYTHONDONTWRITEBYTECODE=1" >> $GITHUB_ENV
+
+      - name: Start API server
+        run: |
+          uvicorn activekg.api.main:app --host 0.0.0.0 --port 8000 --workers 1 > api_server.log 2>&1 &
+          echo $! > api_server.pid
+
+          # Wait for server to be healthy
+          for i in {1..30}; do
+            if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+              echo "✓ API server is healthy"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "✗ API server failed to start"
+              cat api_server.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Seed test data
+        run: |
+          # Seed using evaluation seed nodes if available
+          if [ -f "evaluation/datasets/seed_nodes.json" ]; then
+            python3 -c "
+          import json
+          import requests
+          import time
+
+          with open('evaluation/datasets/seed_nodes.json') as f:
+              nodes = json.load(f)
+
+          seeded = 0
+          for node in nodes:
+              try:
+                  resp = requests.post('http://localhost:8000/nodes', json=node, timeout=10)
+                  if resp.status_code in [200, 201]:
+                      seeded += 1
+                  time.sleep(0.1)  # Rate limit
+              except Exception as e:
+                  print(f'Warning: Failed to seed node: {e}')
+
+          print(f'✓ Seeded {seeded}/{len(nodes)} nodes')
+          "
+          else
+            echo "⚠ No seed_nodes.json found, skipping seeding"
+          fi
+
+      - name: Run scoring mode tests
+        run: |
+          pytest tests/test_scoring_modes.py -v --tb=short --color=yes
+
+      - name: Run smoke tests
+        run: |
+          echo "=== Smoke Test 1: Hybrid search scoring ==="
+          curl -s -X POST http://localhost:8000/debug/search_explain \
+            -H "Content-Type: application/json" \
+            -d '{"query":"machine learning engineer frameworks","use_hybrid":true,"top_k":5}' \
+            | python3 -c "import sys, json; d=json.load(sys.stdin); print(json.dumps({'score_type': d.get('score_type'), 'result_count': d.get('result_count'), 'score_range': d.get('score_range')}, indent=2))"
+
+          echo ""
+          echo "=== Smoke Test 2: Vector-only search scoring ==="
+          curl -s -X POST http://localhost:8000/debug/search_explain \
+            -H "Content-Type: application/json" \
+            -d '{"query":"machine learning engineer frameworks","use_hybrid":false,"top_k":5}' \
+            | python3 -c "import sys, json; d=json.load(sys.stdin); print(json.dumps({'score_type': d.get('score_type'), 'result_count': d.get('result_count'), 'score_range': d.get('score_range')}, indent=2))"
+
+          echo ""
+          echo "=== Smoke Test 3: /ask endpoint metadata ==="
+          curl -s -X POST http://localhost:8000/ask \
+            -H "Content-Type: application/json" \
+            -d '{"question":"What ML frameworks does the Machine Learning Engineer position require?"}' \
+            | python3 -c "import sys, json; d=json.load(sys.stdin); m=d.get('metadata',{}); print(json.dumps({'gating_score': m.get('gating_score'), 'gating_score_type': m.get('gating_score_type'), 'cited_nodes': m.get('cited_nodes'), 'confidence': d.get('confidence')}, indent=2))"
+
+          echo ""
+          echo "=== Smoke Test 4: Embedding configuration ==="
+          curl -s http://localhost:8000/debug/embed_info \
+            | python3 -c "import sys, json; d=json.load(sys.stdin); print(json.dumps({'backend': d.get('backend'), 'model': d.get('model'), 'dimension': d.get('vector_dimension',{}).get('db_dim')}, indent=2))"
+
+      - name: Upload server logs
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: server-logs-${{ matrix.mode }}-py${{ matrix.python-version }}
+          path: api_server.log
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f api_server.pid ]; then
+            kill $(cat api_server.pid) 2>/dev/null || true
+          fi
+          pkill -f "uvicorn activekg" 2>/dev/null || true

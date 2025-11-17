@@ -1,0 +1,62 @@
+{
+  "Senior Python developer with machine learning experience": [
+    "resume-001", "resume-023", "resume-045"
+  ],
+  "Data scientist with 5+ years in deep learning": [
+    "resume-012", "resume-034", "resume-056"
+  ],
+  "Full-stack engineer React and Node.js": [
+    "resume-005", "resume-027", "resume-049"
+  ],
+  "DevOps engineer with Kubernetes experience": [
+    "resume-008", "resume-030", "resume-052"
+  ],
+  "Product manager with B2B SaaS background": [
+    "resume-015", "resume-037", "resume-059"
+  ],
+  "UX designer specializing in mobile apps": [
+    "resume-018", "resume-040", "resume-062"
+  ],
+  "Backend engineer Java Spring Boot": [
+    "resume-002", "resume-024", "resume-046"
+  ],
+  "Frontend developer with Vue.js expertise": [
+    "resume-006", "resume-028", "resume-050"
+  ],
+  "Machine learning engineer computer vision": [
+    "resume-013", "resume-035", "resume-057"
+  ],
+  "Cloud architect AWS certified": [
+    "resume-009", "resume-031", "resume-053"
+  ],
+  "Software engineering manager": [
+    "resume-016", "resume-038", "resume-060"
+  ],
+  "Data engineer with Spark and Airflow": [
+    "resume-014", "resume-036", "resume-058"
+  ],
+  "Security engineer penetration testing": [
+    "resume-010", "resume-032", "resume-054"
+  ],
+  "Mobile developer iOS Swift": [
+    "resume-019", "resume-041", "resume-063"
+  ],
+  "Quality assurance automation engineer": [
+    "resume-011", "resume-033", "resume-055"
+  ],
+  "Database administrator PostgreSQL": [
+    "resume-003", "resume-025", "resume-047"
+  ],
+  "Site reliability engineer": [
+    "resume-017", "resume-039", "resume-061"
+  ],
+  "AI researcher natural language processing": [
+    "resume-020", "resume-042", "resume-064"
+  ],
+  "Technical writer API documentation": [
+    "resume-007", "resume-029", "resume-051"
+  ],
+  "Solutions architect enterprise software": [
+    "resume-004", "resume-026", "resume-048"
+  ]
+}

@@ -1,0 +1,192 @@
+[
+  {
+    "external_id": "issue_perf_1",
+    "classes": ["Issue", "Performance"],
+    "text": "Main API latency spikes during peak hours. Performance issues reported: API gateway shows 500ms+ latency during peak traffic. Database connection pool exhaustion. Memory leaks in user service.",
+    "props": {
+      "title": "Main API latency spikes during peak hours",
+      "description": "Performance issues reported: API gateway shows 500ms+ latency during peak traffic. Database connection pool exhaustion. Memory leaks in user service.",
+      "severity": "high",
+      "status": "open"
+    },
+    "metadata": {
+      "topic": "performance",
+      "keywords": ["latency", "performance", "api", "database", "memory leak"],
+      "component": "api-gateway"
+    }
+  },
+  {
+    "external_id": "issue_perf_2",
+    "classes": ["Issue", "Performance"],
+    "text": "Database query performance degradation. Main performance problems: Slow SELECT queries on orders table. Missing indexes on foreign keys. N+1 query problems in GraphQL resolver.",
+    "props": {
+      "title": "Database query performance degradation",
+      "description": "Main performance problems: Slow SELECT queries on orders table. Missing indexes on foreign keys. N+1 query problems in GraphQL resolver.",
+      "severity": "critical",
+      "status": "in_progress"
+    },
+    "metadata": {
+      "topic": "performance",
+      "keywords": ["database", "performance", "query", "index", "optimization"],
+      "component": "database"
+    }
+  },
+  {
+    "external_id": "resume_java_1",
+    "classes": ["Resume", "Profile"],
+    "text": "Sarah Chen - Senior Java Engineer. 10+ years of Java development experience. Expert in Spring Boot, Spring Cloud, Hibernate. Built microservices with Java 17, Spring Boot 3.0. Experience with Kafka, Redis, PostgreSQL.",
+    "props": {
+      "name": "Sarah Chen",
+      "title": "Senior Java Engineer",
+      "summary": "10+ years of Java development experience. Expert in Spring Boot, Spring Cloud, Hibernate. Built microservices with Java 17, Spring Boot 3.0. Experience with Kafka, Redis, PostgreSQL.",
+      "years_experience": 10
+    },
+    "metadata": {
+      "skills": ["java", "spring-boot", "spring", "hibernate", "microservices", "kafka", "postgresql"],
+      "level": "senior",
+      "topic": "java-developer"
+    }
+  },
+  {
+    "external_id": "resume_java_2",
+    "classes": ["Resume", "Profile"],
+    "text": "Michael Rodriguez - Java Spring Boot Architect. Java Spring Boot specialist with 8 years experience. Built enterprise applications using Spring Boot, Spring Security, Spring Data JPA. Expertise in Java performance tuning and AWS deployment.",
+    "props": {
+      "name": "Michael Rodriguez",
+      "title": "Java Spring Boot Architect",
+      "summary": "Java Spring Boot specialist with 8 years experience. Built enterprise applications using Spring Boot, Spring Security, Spring Data JPA. Expertise in Java performance tuning and AWS deployment.",
+      "years_experience": 8
+    },
+    "metadata": {
+      "skills": ["java", "spring-boot", "spring-security", "spring-data", "aws", "architecture"],
+      "level": "architect",
+      "topic": "java-developer"
+    }
+  },
+  {
+    "external_id": "issue_payment_1",
+    "classes": ["Issue", "Payment"],
+    "text": "Payment gateway timeout errors. Current payment processing issues: Stripe webhooks failing intermittently. Transaction timeouts for amounts over $1000. Refund processing stuck in pending state.",
+    "props": {
+      "title": "Payment gateway timeout errors",
+      "description": "Current payment processing issues: Stripe webhooks failing intermittently. Transaction timeouts for amounts over $1000. Refund processing stuck in pending state.",
+      "severity": "critical",
+      "status": "open"
+    },
+    "metadata": {
+      "topic": "payment",
+      "keywords": ["payment", "stripe", "webhook", "timeout", "refund", "processing"],
+      "component": "payment-service"
+    }
+  },
+  {
+    "external_id": "issue_payment_2",
+    "classes": ["Issue", "Payment"],
+    "text": "Payment reconciliation failures. Payment problems reported: Daily reconciliation job failing. Duplicate charge detection not working. Currency conversion errors for international transactions.",
+    "props": {
+      "title": "Payment reconciliation failures",
+      "description": "Payment problems reported: Daily reconciliation job failing. Duplicate charge detection not working. Currency conversion errors for international transactions.",
+      "severity": "high",
+      "status": "investigating"
+    },
+    "metadata": {
+      "topic": "payment",
+      "keywords": ["payment", "reconciliation", "duplicate", "currency", "processing"],
+      "component": "payment-service"
+    }
+  },
+  {
+    "external_id": "job_sre_1",
+    "classes": ["Job", "SRE"],
+    "text": "Senior SRE - Observability Platform. SRE position requires metrics and monitoring experience. Must have expertise with Prometheus, Grafana, Datadog. Experience with distributed tracing, log aggregation, and alerting systems required.",
+    "props": {
+      "title": "Senior SRE - Observability Platform",
+      "description": "SRE position requires metrics and monitoring experience. Must have expertise with Prometheus, Grafana, Datadog. Experience with distributed tracing, log aggregation, and alerting systems required.",
+      "level": "senior",
+      "department": "platform"
+    },
+    "metadata": {
+      "role": "sre",
+      "skills": ["prometheus", "grafana", "datadog", "metrics", "monitoring", "observability", "tracing"],
+      "topic": "sre-job"
+    }
+  },
+  {
+    "external_id": "job_sre_2",
+    "classes": ["Job", "SRE"],
+    "text": "Staff SRE - Monitoring Infrastructure. SRE opening needs monitoring and metrics expertise. Building next-gen observability platform. Required: Prometheus, Victoria Metrics, ClickHouse for metrics storage. Experience with high-cardinality metrics.",
+    "props": {
+      "title": "Staff SRE - Monitoring Infrastructure",
+      "description": "SRE opening needs monitoring and metrics expertise. Building next-gen observability platform. Required: Prometheus, Victoria Metrics, ClickHouse for metrics storage. Experience with high-cardinality metrics.",
+      "level": "staff",
+      "department": "infrastructure"
+    },
+    "metadata": {
+      "role": "sre",
+      "skills": ["prometheus", "victoria-metrics", "clickhouse", "monitoring", "metrics", "high-cardinality"],
+      "topic": "sre-job"
+    }
+  },
+  {
+    "external_id": "doc_vector_db_1",
+    "classes": ["Document", "TechDiscussion"],
+    "text": "Vector Database Technology Evaluation. Vector database technologies discussed in architecture review: Pinecone for managed vector search, Milvus for self-hosted deployment, Qdrant for high-performance retrieval. Comparing pgvector as PostgreSQL extension versus dedicated vector databases like Weaviate and ChromaDB.",
+    "props": {
+      "title": "Vector Database Technology Evaluation",
+      "content": "Vector database technologies discussed in architecture review: Pinecone for managed vector search, Milvus for self-hosted deployment, Qdrant for high-performance retrieval. Comparing pgvector as PostgreSQL extension versus dedicated vector databases like Weaviate and ChromaDB.",
+      "author": "Tech Architecture Team"
+    },
+    "metadata": {
+      "topic": "vector-database",
+      "keywords": ["vector-database", "pinecone", "milvus", "qdrant", "pgvector", "weaviate", "chromadb"],
+      "category": "architecture"
+    }
+  },
+  {
+    "external_id": "doc_vector_db_2",
+    "classes": ["Document", "TechDiscussion"],
+    "text": "Embedding Search Infrastructure Design. Vector database technologies under consideration: Evaluating Pinecone vs Milvus for semantic search. Qdrant shows promising benchmark results. pgvector provides cost-effective solution for moderate scale. Also reviewing Vespa and Vald.",
+    "props": {
+      "title": "Embedding Search Infrastructure Design",
+      "content": "Vector database technologies under consideration: Evaluating Pinecone vs Milvus for semantic search. Qdrant shows promising benchmark results. pgvector provides cost-effective solution for moderate scale. Also reviewing Vespa and Vald.",
+      "author": "Search Team"
+    },
+    "metadata": {
+      "topic": "vector-database",
+      "keywords": ["vector-database", "embedding", "semantic-search", "pinecone", "milvus", "qdrant", "vespa", "vald"],
+      "category": "infrastructure"
+    }
+  },
+  {
+    "external_id": "resume_k8s_1",
+    "classes": ["Resume", "Profile"],
+    "text": "Emily Zhang - Cloud Infrastructure Engineer. Kubernetes and cloud infrastructure specialist. 6 years experience managing large-scale K8s clusters on AWS, GCP, Azure. Expert in Helm, Istio, ArgoCD. Built multi-tenant Kubernetes platforms.",
+    "props": {
+      "name": "Emily Zhang",
+      "title": "Cloud Infrastructure Engineer",
+      "summary": "Kubernetes and cloud infrastructure specialist. 6 years experience managing large-scale K8s clusters on AWS, GCP, Azure. Expert in Helm, Istio, ArgoCD. Built multi-tenant Kubernetes platforms.",
+      "years_experience": 6
+    },
+    "metadata": {
+      "skills": ["kubernetes", "k8s", "cloud", "aws", "gcp", "azure", "helm", "istio", "argocd"],
+      "level": "senior",
+      "topic": "cloud-engineer"
+    }
+  },
+  {
+    "external_id": "resume_k8s_2",
+    "classes": ["Resume", "Profile"],
+    "text": "David Kim - DevOps Engineer - Kubernetes Specialist. Kubernetes expert specializing in cloud infrastructure automation. Experience with Kubernetes, Terraform, AWS EKS, GCP GKE. Built CI/CD pipelines, implemented GitOps with Flux and ArgoCD.",
+    "props": {
+      "name": "David Kim",
+      "title": "DevOps Engineer - Kubernetes Specialist",
+      "summary": "Kubernetes expert specializing in cloud infrastructure automation. Experience with Kubernetes, Terraform, AWS EKS, GCP GKE. Built CI/CD pipelines, implemented GitOps with Flux and ArgoCD.",
+      "years_experience": 5
+    },
+    "metadata": {
+      "skills": ["kubernetes", "cloud", "terraform", "aws", "gcp", "eks", "gke", "devops", "gitops"],
+      "level": "mid-senior",
+      "topic": "cloud-engineer"
+    }
+  }
+]

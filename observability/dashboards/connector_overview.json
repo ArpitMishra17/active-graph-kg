@@ -1,0 +1,478 @@
+{
+  "dashboard": {
+    "title": "Active Graph KG - Connector Overview",
+    "tags": ["activekg", "connectors"],
+    "timezone": "utc",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Webhook Verification Rate",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(webhook_pubsub_verify_total{result=\"secret_ok\"}[5m])) or vector(0)",
+            "legendFormat": "Secret OK",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(webhook_pubsub_verify_total{result=\"oidc_ok\"}[5m])) or vector(0)",
+            "legendFormat": "OIDC OK",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(rate(webhook_pubsub_verify_total{result!~\"secret_ok|oidc_ok|skipped\"}[5m])) or vector(0)",
+            "legendFormat": "Failed",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "color": {"mode": "palette-classic"}
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Webhook Verification Failure Rate",
+        "type": "gauge",
+        "gridPos": {"x": 12, "y": 0, "w": 6, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(webhook_pubsub_verify_total{result!~\"secret_ok|oidc_ok|skipped\"}[5m])) / clamp_min(sum(rate(webhook_pubsub_verify_total[5m])), 1) * 100",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 5, "color": "yellow"},
+                {"value": 10, "color": "red"}
+              ]
+            },
+            "max": 100,
+            "min": 0
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Webhook Topic Rejections",
+        "type": "stat",
+        "gridPos": {"x": 18, "y": 0, "w": 6, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(increase(webhook_topic_rejected_total[10m])) or vector(0)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 1, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Connector Queue Depth by Provider/Tenant",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 8, "w": 24, "h": 8},
+        "targets": [
+          {
+            "expr": "connector_worker_queue_depth",
+            "legendFormat": "{{provider}}/{{tenant}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "palette-classic"}
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byRegexp", "options": ".*"},
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 2
+                }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]}
+        }
+      },
+      {
+        "id": 5,
+        "title": "Ingestion Rate by Provider",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(connector_ingest_total[5m])) by (provider)",
+            "legendFormat": "{{provider}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": {"mode": "palette-classic"}
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Ingestion Error Rate",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(connector_ingest_errors_total[5m])) / clamp_min(sum(rate(connector_ingest_total[5m])), 1) * 100",
+            "legendFormat": "Error Rate %",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {"fixedColor": "red", "mode": "fixed"},
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 20
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "single"}
+        }
+      },
+      {
+        "id": 7,
+        "title": "Worker Processing Latency (p50, p95, p99)",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(connector_worker_process_duration_bucket[5m])) by (le))",
+            "legendFormat": "p50",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(connector_worker_process_duration_bucket[5m])) by (le))",
+            "legendFormat": "p95",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(connector_worker_process_duration_bucket[5m])) by (le))",
+            "legendFormat": "p99",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": {"mode": "palette-classic"}
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Purger Activity",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(increase(connector_purger_total{result=\"success\"}[1h])) or vector(0)",
+            "legendFormat": "Successful Purges",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(increase(connector_purger_total{result=\"error\"}[1h])) or vector(0)",
+            "legendFormat": "Failed Purges",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "palette-classic"}
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Pub/Sub Subscriber Reconnects",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 32, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "sum(increase(connector_pubsub_reconnect_total[15m])) or vector(0)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 3, "color": "yellow"},
+                {"value": 5, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "Key Rotation Errors",
+        "type": "stat",
+        "gridPos": {"x": 6, "y": 32, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "sum(increase(connector_rotation_total{result=\"error\"}[30m])) or vector(0)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 1, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 11,
+        "title": "Config Decryption Failures",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 32, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "sum(increase(connector_config_decrypt_failures_total[30m])) or vector(0)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 1, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 12,
+        "title": "Total Ingested Documents (24h)",
+        "type": "stat",
+        "gridPos": {"x": 18, "y": 32, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "sum(increase(connector_ingest_total[24h])) or vector(0)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "blue"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 13,
+        "title": "Drive Poller - Runs & Errors",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 36, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(connector_poller_runs_total{provider=\"drive\"}[5m])) by (tenant)",
+            "legendFormat": "Runs - {{tenant}}",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(connector_poller_errors_total{provider=\"drive\"}[5m])) by (tenant, error_type)",
+            "legendFormat": "Errors - {{tenant}}/{{error_type}}",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": {"mode": "palette-classic"}
+          }
+        },
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "mean"]}
+        }
+      },
+      {
+        "id": 14,
+        "title": "Drive Poller - Latency (p50, p95, p99)",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 36, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(connector_poller_latency_seconds_bucket{provider=\"drive\"}[5m])) by (le, tenant))",
+            "legendFormat": "p50 - {{tenant}}",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(connector_poller_latency_seconds_bucket{provider=\"drive\"}[5m])) by (le, tenant))",
+            "legendFormat": "p95 - {{tenant}}",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(connector_poller_latency_seconds_bucket{provider=\"drive\"}[5m])) by (le, tenant))",
+            "legendFormat": "p99 - {{tenant}}",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": {"mode": "palette-classic"}
+          }
+        },
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]}
+        }
+      },
+      {
+        "id": 15,
+        "title": "Drive Poller - Error Rate",
+        "type": "gauge",
+        "gridPos": {"x": 0, "y": 44, "w": 8, "h": 6},
+        "targets": [
+          {
+            "expr": "sum(rate(connector_poller_errors_total{provider=\"drive\"}[10m])) / clamp_min(sum(rate(connector_poller_runs_total{provider=\"drive\"}[10m])), 1) * 100",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 2, "color": "yellow"},
+                {"value": 5, "color": "red"}
+              ]
+            },
+            "max": 100,
+            "min": 0
+          }
+        }
+      },
+      {
+        "id": 16,
+        "title": "Drive Poller - Total Runs (1h)",
+        "type": "stat",
+        "gridPos": {"x": 8, "y": 44, "w": 8, "h": 6},
+        "targets": [
+          {
+            "expr": "sum(increase(connector_poller_runs_total{provider=\"drive\"}[1h])) or vector(0)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "blue"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 17,
+        "title": "Drive Poller - Total Errors (1h)",
+        "type": "stat",
+        "gridPos": {"x": 16, "y": 44, "w": 8, "h": 6},
+        "targets": [
+          {
+            "expr": "sum(increase(connector_poller_errors_total{provider=\"drive\"}[1h])) or vector(0)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 1, "color": "yellow"},
+                {"value": 10, "color": "red"}
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "templating": {
+      "list": []
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "tags": ["deployment"]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,74 @@
+site_name: Active Graph KG
+site_description: Active, self-improving knowledge graph with semantic search and LLM Q&A
+site_author: Active Graph KG Team
+site_url: https://yourusername.github.io/active-graph-kg
+
+repo_name: active-graph-kg
+repo_url: https://github.com/yourusername/active-graph-kg
+edit_uri: edit/main/docs/
+
+theme:
+  name: readthedocs
+  # Alternatively, use Material theme (requires: pip install mkdocs-material):
+  # name: material
+  # palette:
+  #   primary: indigo
+  #   accent: indigo
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+
+plugins:
+  - search
+  - mkdocstrings  # Optional: for API docs from Python docstrings
+
+markdown_extensions:
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - admonition
+  - codehilite:
+      guess_lang: false
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - def_list
+  - footnotes
+  - tables
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quickstart (5 min): ../QUICKSTART.md
+      - Implementation Status: ../IMPLEMENTATION_STATUS.md
+  - API Reference:
+      - Complete API: api-reference.md
+  - Operations Guides:
+      - Security Guide: operations/security.md
+      - Monitoring & Metrics: operations/monitoring.md
+      - Production Deployment: operations/deployment.md
+  - Development Guides:
+      - Testing Guide: development/testing.md
+      - Architecture: development/architecture.md
+  - Additional Resources:
+      - Phase 1+ Summary: ../PHASE1_PLUS_SUMMARY.md
+      - Phase 1+ Improvements: ../PHASE1_PLUS_IMPROVEMENTS.md
+      - Production Optimization: ../PRODUCTION_OPTIMIZATION_GUIDE.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/yourusername/active-graph-kg
+  version:
+    provider: mike  # Optional: for versioned docs

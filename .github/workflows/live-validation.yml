@@ -1,0 +1,103 @@
+name: Live Validation (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_smoke:
+        description: "Run live_smoke.sh"
+        default: "false"
+        required: false
+      run_extended:
+        description: "Run live_extended.sh"
+        default: "false"
+        required: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: ankane/pgvector:latest
+        env:
+          POSTGRES_USER: activekg
+          POSTGRES_PASSWORD: activekg
+          POSTGRES_DB: activekg
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U activekg" 
+          --health-interval 10s 
+          --health-timeout 5s 
+          --health-retries 5
+
+    env:
+      API: http://localhost:8000
+      ACTIVEKG_DSN: postgresql://activekg:activekg@localhost:5432/activekg
+      # Keep LLM disabled for CI; /ask/stream will return 503 which scripts tolerate
+      LLM_ENABLED: "false"
+      # Avoid startup-time DDL in CI
+      AUTO_INDEX_ON_STARTUP: "false"
+      # JWT dev token should be set as secret if you enable smoke/extended
+      TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install -U pip
+          pip install -r requirements.txt
+
+      - name: Wait for Postgres and create extension
+        run: |
+          for i in {1..30}; do
+            if pg_isready -h localhost -p 5432 -U activekg; then break; fi; sleep 1; done
+          PGPASSWORD=activekg psql -h localhost -U activekg -d activekg -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Start API
+        run: |
+          source venv/bin/activate
+          uvicorn activekg.api.main:app --host 0.0.0.0 --port 8000 &
+          for i in {1..60}; do if curl -sSf http://localhost:8000/health >/dev/null; then exit 0; fi; sleep 1; done; exit 1
+
+      - name: Metrics probe (no token required)
+        run: |
+          bash scripts/metrics_probe.sh
+
+      - name: Proof points report
+        env:
+          TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
+        run: |
+          bash scripts/proof_points_report.sh || true
+
+      - name: Live smoke (optional)
+        if: ${{ github.event.inputs.run_smoke == 'true' }}
+        env:
+          TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
+        run: |
+          bash scripts/live_smoke.sh || true
+
+      - name: Live extended (optional)
+        if: ${{ github.event.inputs.run_extended == 'true' }}
+        env:
+          TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
+        run: |
+          bash scripts/live_extended.sh || true
+
+      - name: Upload proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-points-report
+          path: evaluation/PROOF_POINTS_REPORT.md
+          if-no-files-found: ignore
+

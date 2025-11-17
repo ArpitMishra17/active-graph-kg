@@ -1,0 +1,52 @@
+[
+  {
+    "question": "What is Active Graph KG?",
+    "answer": "Active Graph KG is a self-refreshing knowledge graph system that uses concept drift detection to automatically detect and refresh outdated embeddings.",
+    "relevant_node_ids": ["doc-whitepaper", "doc-readme", "doc-blog"]
+  },
+  {
+    "question": "How does drift detection work?",
+    "answer": "Drift detection computes the cosine distance between old and new embeddings. When drift exceeds a threshold (default 0.1), the system triggers refresh events.",
+    "relevant_node_ids": ["doc-whitepaper", "doc-evidence"]
+  },
+  {
+    "question": "What are the benefits of weighted search?",
+    "answer": "Weighted search combines similarity scores with recency and drift penalties to surface fresher, more stable results without significantly hurting accuracy.",
+    "relevant_node_ids": ["doc-whitepaper", "doc-defense-strategy"]
+  },
+  {
+    "question": "How does the LLM integration work?",
+    "answer": "The LLM integration follows Zhu 2023 design: structured KG for retrieval, LLM for natural language reasoning. All answers include grounded citations with lineage tracking.",
+    "relevant_node_ids": ["doc-whitepaper", "doc-hardening-summary"]
+  },
+  {
+    "question": "What anomaly types are detected?",
+    "answer": "The system detects three anomaly types: drift spikes (nodes with drift > 2x mean), trigger storms (>50 trigger events in 1 hour), and scheduler lag (nodes overdue for refresh).",
+    "relevant_node_ids": ["doc-hardening-summary", "doc-defense-strategy"]
+  },
+  {
+    "question": "What databases are supported?",
+    "answer": "Active Graph KG uses PostgreSQL with pgvector extension for vector similarity search. It supports ACID transactions and row-level security for multi-tenancy.",
+    "relevant_node_ids": ["doc-whitepaper", "doc-readme"]
+  },
+  {
+    "question": "How fast is Groq inference?",
+    "answer": "Groq provides ultra-fast LLM inference with 200-500ms latency using Mixtral 8x7B, compared to 2-5s for GPT-4.",
+    "relevant_node_ids": ["doc-hardening-summary", "doc-llm-provider"]
+  },
+  {
+    "question": "What are the refresh policy options?",
+    "answer": "Refresh policies support two types: interval-based (5m, 1h, 1d) and cron-based (standard cron expressions). Nodes are refreshed automatically by the scheduler.",
+    "relevant_node_ids": ["doc-whitepaper", "doc-scheduler"]
+  },
+  {
+    "question": "How is confidence calculated for LLM answers?",
+    "answer": "Confidence is calculated using a heuristic based on average similarity of cited nodes, citation coverage of top results, and answer length penalty.",
+    "relevant_node_ids": ["doc-llm-provider", "doc-hardening-summary"]
+  },
+  {
+    "question": "What research papers validate the design?",
+    "answer": "Active Graph KG is validated by three core papers: Chen 2021 (drift detection), Zhu 2023 (LLM-KG integration), and Gadde 2024 (AI-augmented database systems).",
+    "relevant_node_ids": ["doc-whitepaper", "doc-evidence", "doc-readme"]
+  }
+]
