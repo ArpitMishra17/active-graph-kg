@@ -232,12 +232,12 @@ def get_drive_cursor(tenant_id: str, claims: JWTClaims | None = Depends(get_jwt_
     if JWT_ENABLED and (not claims or "admin:refresh" not in (claims.scopes or [])):
         raise HTTPException(status_code=403, detail="admin scope required")
 
-
     import psycopg
     from psycopg.rows import dict_row
 
     # Get updated_at timestamp from database
     from activekg.common.env import env_str
+
     dsn = env_str(["ACTIVEKG_DSN", "DATABASE_URL"])  # empty string if not set
     if not dsn:
         raise HTTPException(status_code=500, detail="ACTIVEKG_DSN/DATABASE_URL not configured")

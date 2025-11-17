@@ -70,7 +70,9 @@ class RotateKeysRequest(BaseModel):
 
 APP_VERSION = os.getenv("ACTIVEKG_VERSION", "0.1.0")
 # Prefer ACTIVEKG_DSN; fall back to DATABASE_URL for PaaS (e.g., Railway Postgres plugin)
-DSN = env_str(["ACTIVEKG_DSN", "DATABASE_URL"], "postgresql://activekg:activekg@localhost:5432/activekg")
+DSN = env_str(
+    ["ACTIVEKG_DSN", "DATABASE_URL"], "postgresql://activekg:activekg@localhost:5432/activekg"
+)
 EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "sentence-transformers")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 WEIGHTED_SEARCH_CANDIDATE_FACTOR = float(os.getenv("WEIGHTED_SEARCH_CANDIDATE_FACTOR", "2.0"))

@@ -44,4 +44,3 @@ def env_float(name: str, default: float = 0.0) -> float:
         return float(val)
     except Exception:
         return default
-

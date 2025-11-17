@@ -17,9 +17,7 @@ from activekg.triggers.trigger_engine import TriggerEngine
 @pytest.fixture(scope="session")
 def dsn():
     """Database DSN."""
-    return os.getenv(
-        "ACTIVEKG_DSN", "postgresql://activekg:activekg@localhost:5432/activekg"
-    )
+    return os.getenv("ACTIVEKG_DSN", "postgresql://activekg:activekg@localhost:5432/activekg")
 
 
 @pytest.fixture(scope="session")

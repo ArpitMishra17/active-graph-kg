@@ -1763,7 +1763,9 @@ class GraphRepository:
                             ev_type = str(ev.get("type")) if isinstance(ev, dict) else None
                             created = ev.get("created_at") if isinstance(ev, dict) else None
                             created_s = (
-                                created.isoformat() if hasattr(created, "isoformat") else (str(created) if created is not None else None)
+                                created.isoformat()
+                                if hasattr(created, "isoformat")
+                                else (str(created) if created is not None else None)
                             )
                             payload = ev.get("payload") if isinstance(ev, dict) else {}
                             recent.append(

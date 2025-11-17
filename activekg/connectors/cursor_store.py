@@ -14,6 +14,7 @@ from activekg.connectors.types import ConnectorProvider
 
 def _get_dsn() -> str:
     from activekg.common.env import env_str
+
     dsn = env_str(["ACTIVEKG_DSN", "DATABASE_URL"])  # empty string if not set
     if not dsn:
         raise RuntimeError("ACTIVEKG_DSN/DATABASE_URL not set for cursor store")
