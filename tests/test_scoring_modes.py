@@ -111,6 +111,9 @@ class TestDebugSearchExplain:
 
     def test_search_explain_rrf_hybrid(self, client_rrf):
         """Test /debug/search_explain with RRF hybrid mode."""
+        # Ensure RRF mode is set (fixtures are module-scoped so env can be overridden)
+        os.environ["HYBRID_RRF_ENABLED"] = "true"
+
         response = client_rrf.post(
             "/debug/search_explain",
             json={"query": "machine learning engineer frameworks", "use_hybrid": True, "top_k": 5},
@@ -183,6 +186,9 @@ class TestThresholdBehavior:
 
     def test_rrf_low_threshold_applied(self, client_rrf):
         """Test that RRF uses the lower threshold (0.01) appropriately."""
+        # Ensure RRF mode is set (fixtures are module-scoped so env can be overridden)
+        os.environ["HYBRID_RRF_ENABLED"] = "true"
+
         response = client_rrf.post("/ask", json={"question": "machine learning frameworks"})
 
         assert response.status_code == 200

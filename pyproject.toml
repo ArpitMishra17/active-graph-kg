@@ -49,6 +49,7 @@ select = [
 ignore = [
     "E501",  # Line too long (handled by formatter)
     "B904",  # raise-without-from-inside-except (too noisy for prototype code)
+    "UP017", # Use datetime.UTC alias (Python 3.11+ only, we support 3.10+)
 ]
 
 # Allow fix for all enabled rules when using --fix
