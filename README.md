@@ -85,7 +85,7 @@ psql postgresql://activekg:activekg@localhost:5432/activekg \
 
 # Enable hybrid text search (BM25) for hybrid BM25+vector retrieval
 psql postgresql://activekg:activekg@localhost:5432/activekg \
-  -f db/add_text_search.sql
+  -f db/migrations/add_text_search.sql
 
 # Optional: Enable Row-Level Security for multi-tenancy
 psql postgresql://activekg:activekg@localhost:5432/activekg \
@@ -429,6 +429,35 @@ active-graph-kg/
 ├── QUICKSTART.md                      # 5-minute setup guide
 └── README.md                          # This file
 ```
+
+---
+
+## Deploy on Railway (Self‑Serve Demo)
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?templateUrl=<your-repo-url>)
+
+After deploy, set variables in Railway → Variables:
+- `ACTIVEKG_DSN` (Postgres with pgvector). Optional if you added the Railway Postgres plugin — the app will fall back to `DATABASE_URL` automatically.
+- `EMBEDDING_BACKEND=sentence-transformers`
+- `EMBEDDING_MODEL=all-MiniLM-L6-v2` (or larger, e.g., all-mpnet-base-v2)
+- `SEARCH_DISTANCE=cosine`
+- Optional: `PGVECTOR_INDEXES=ivfflat,hnsw`, `RUN_SCHEDULER=true`, `AUTO_INDEX_ON_STARTUP=false`
+
+Initialize DB once:
+```bash
+psql $ACTIVEKG_DSN -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql $ACTIVEKG_DSN -f db/init.sql
+psql $ACTIVEKG_DSN -f enable_rls_policies.sql
+```
+
+Run the demo bundle against Railway:
+```bash
+export API=https://<your-railway-domain>
+export TOKEN='<admin JWT>'
+make demo-run && make open-grafana
+```
+
+Full guide: docs/operations/SELF_SERVE_RAILWAY.md
 
 ---
 

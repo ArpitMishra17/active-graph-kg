@@ -27,7 +27,7 @@ Add this badge to your repo README (already included in the main README section 
 When Railway imports the repo, it will use Nixpacks or the provided Dockerfile/Procfile to build the API.
 
 ### Configure Environment Variables
-Set these variables in Railway → Variables for the API service:
+Set these variables in Railway → Variables for the API service (note: the app will also accept `DATABASE_URL` as a fallback DSN when using the Railway Postgres plugin):
 
 Required
 - `ACTIVEKG_DSN` — e.g., `postgresql://USER:PASSWORD@HOST:5432/DBNAME`
@@ -52,7 +52,12 @@ Rate Limiting (optional)
 - `REDIS_URL=redis://<host>:6379/0`
 
 ### Initialize the Database
-Run these once from your laptop or any psql client:
+Option 1 (recommended): run the bootstrap helper (uses ACTIVEKG_DSN or DATABASE_URL automatically):
+```bash
+make db-bootstrap
+```
+
+Option 2: run these once from your laptop or any psql client:
 ```bash
 export ACTIVEKG_DSN='postgresql://USER:PASSWORD@HOST:5432/DBNAME'
 psql $ACTIVEKG_DSN -c "CREATE EXTENSION IF NOT EXISTS vector;"
@@ -64,7 +69,7 @@ psql $ACTIVEKG_DSN -f db/migrations/add_text_search.sql
 
 Build ANN indexes (non-blocking, concurrent):
 ```bash
-curl -X POST "$API/_admin/indexes" \
+curl -X POST "$API/admin/indexes" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"action":"ensure","types":["ivfflat","hnsw"],"metric":"cosine"}'
@@ -109,4 +114,3 @@ Initialize and index as above (`db/init.sql`, `enable_rls_policies.sql`, `/admin
 - [ ] Indexes ensured via admin endpoint
 - [ ] `make demo-run` executed
 - [ ] Grafana dashboards connected (optional)
-

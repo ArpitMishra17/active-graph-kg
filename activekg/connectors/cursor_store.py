@@ -13,9 +13,9 @@ from psycopg.rows import dict_row
 
 
 def _get_dsn() -> str:
-    dsn = os.getenv("ACTIVEKG_DSN")
+    dsn = os.getenv("ACTIVEKG_DSN") or os.getenv("DATABASE_URL")
     if not dsn:
-        raise RuntimeError("ACTIVEKG_DSN not set for cursor store")
+        raise RuntimeError("ACTIVEKG_DSN/DATABASE_URL not set for cursor store")
     return dsn
 
 

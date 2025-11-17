@@ -238,9 +238,9 @@ def get_drive_cursor(tenant_id: str, claims: JWTClaims | None = Depends(get_jwt_
     from psycopg.rows import dict_row
 
     # Get updated_at timestamp from database
-    dsn = os.getenv("ACTIVEKG_DSN")
+    dsn = os.getenv("ACTIVEKG_DSN") or os.getenv("DATABASE_URL")
     if not dsn:
-        raise HTTPException(status_code=500, detail="ACTIVEKG_DSN not configured")
+        raise HTTPException(status_code=500, detail="ACTIVEKG_DSN/DATABASE_URL not configured")
 
     try:
         with psycopg.connect(dsn, row_factory=dict_row) as conn:

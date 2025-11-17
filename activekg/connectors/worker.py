@@ -267,9 +267,9 @@ def start_worker():
 
     # Get dependencies
     redis_client = get_redis_client()
-    dsn = os.getenv("ACTIVEKG_DSN")
+    dsn = os.getenv("ACTIVEKG_DSN") or os.getenv("DATABASE_URL")
     if not dsn:
-        logger.error("ACTIVEKG_DSN not set")
+        logger.error("ACTIVEKG_DSN/DATABASE_URL not set")
         sys.exit(1)
 
     repo = GraphRepository(dsn)

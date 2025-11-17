@@ -1,8 +1,9 @@
 SHELL := /bin/bash
 
+
 .PHONY: live-smoke live-extended metrics-probe proof-report rate-limit-validate \
 	trigger-effectiveness ingestion-pipeline scheduler-sla governance-audit \
-	failure-recovery dx-timing demo-run open-grafana
+	failure-recovery dx-timing demo-run open-grafana db-bootstrap
 
 API ?= http://localhost:8000
 
@@ -94,3 +95,6 @@ open-grafana:
 	( command -v open     >/dev/null 2>&1 && open     "$$URL" ) || \
 	( command -v start    >/dev/null 2>&1 && start "" "$$URL" ) || \
 	echo "Please open $$URL manually."
+
+db-bootstrap:
+	@ACTIVEKG_DSN=$${ACTIVEKG_DSN:-$$DATABASE_URL} bash scripts/db_bootstrap.sh

@@ -559,9 +559,10 @@ def get_config_store(dsn: Optional[str] = None, redis_url: Optional[str] = None)
 
     if _config_store is None:
         if dsn is None:
-            dsn = os.getenv("ACTIVEKG_DSN")
+            # Accept Railway/Heroku style DATABASE_URL as fallback
+            dsn = os.getenv("ACTIVEKG_DSN") or os.getenv("DATABASE_URL")
             if not dsn:
-                raise ValueError("ACTIVEKG_DSN not set")
+                raise ValueError("ACTIVEKG_DSN/DATABASE_URL not set")
 
         if redis_url is None:
             redis_url = os.getenv("REDIS_URL")
