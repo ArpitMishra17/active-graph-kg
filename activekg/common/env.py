@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, Sequence
 import os
+from collections.abc import Sequence
 
 
 def env_str(name_or_names: str | Sequence[str], default: str = "") -> str:

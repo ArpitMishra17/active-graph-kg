@@ -13,7 +13,6 @@ import sys
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
-from activekg.connectors.types import ConnectorProvider
 
 import redis
 from prometheus_client import Counter, Gauge, Histogram
@@ -21,6 +20,7 @@ from prometheus_client import Counter, Gauge, Histogram
 from activekg.connectors.base import ChangeItem
 from activekg.connectors.ingest import IngestionProcessor
 from activekg.connectors.providers.s3 import S3Connector
+from activekg.connectors.types import ConnectorProvider
 from activekg.graph.repository import GraphRepository
 
 if TYPE_CHECKING:

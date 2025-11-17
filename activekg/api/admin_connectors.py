@@ -232,7 +232,6 @@ def get_drive_cursor(tenant_id: str, claims: JWTClaims | None = Depends(get_jwt_
     if JWT_ENABLED and (not claims or "admin:refresh" not in (claims.scopes or [])):
         raise HTTPException(status_code=403, detail="admin scope required")
 
-    import os
 
     import psycopg
     from psycopg.rows import dict_row

@@ -3,8 +3,9 @@ Pytest fixtures for ActiveKG tests.
 """
 
 import os
-import pytest
 from datetime import datetime
+
+import pytest
 
 from activekg.engine.embedding_provider import EmbeddingProvider
 from activekg.graph.models import Node

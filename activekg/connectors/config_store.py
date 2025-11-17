@@ -23,6 +23,8 @@ from psycopg.rows import dict_row
 from activekg.connectors.encryption import get_encryption, sanitize_config_for_logging
 from activekg.connectors.types import ConnectorConfigTD
 
+from .types import RotationBatchResultTD
+
 logger = logging.getLogger(__name__)
 
 # Redis pub/sub (optional - graceful degradation if not available)

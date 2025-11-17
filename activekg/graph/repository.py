@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import UTC
-from typing import Any, TypedDict, NotRequired, cast, Sequence, Literal, Optional, Tuple
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 import numpy as np
 import psycopg
@@ -33,17 +34,17 @@ class TriggerPatternTD(TypedDict, total=False):
 #  triggers, version, last_refreshed, drift_score)
 NodeRow = tuple[
     str,
-    Optional[str],
+    str | None,
     list[str],
     dict[str, Any],
-    Optional[str],
+    str | None,
     Any,  # pgvector array / list
     dict[str, Any],
     dict[str, Any],
     list[dict[str, Any]],
     int,
     Any,  # datetime | None
-    Optional[float],
+    float | None,
 ]
 
 
@@ -101,54 +102,54 @@ class SchedulerLagAnomalyTD(TypedDict):
 
 # Extended row shapes for specific SELECTs (extra computed columns)
 # Node with appended vec_similarity (float) at index 12
-NodeVecSimRow = Tuple[
+NodeVecSimRow = tuple[
     str,
-    Optional[str],
+    str | None,
     list[str],
     dict[str, Any],
-    Optional[str],
+    str | None,
     Any,
     dict[str, Any],
     dict[str, Any],
     list[dict[str, Any]],
     int,
     Any,
-    Optional[float],
+    float | None,
     float,
 ]
 
 # Node with appended vec_similarity (float) and ts_rank (float) at indexes 12 and 13
-NodeHybridRow = Tuple[
+NodeHybridRow = tuple[
     str,
-    Optional[str],
+    str | None,
     list[str],
     dict[str, Any],
-    Optional[str],
+    str | None,
     Any,
     dict[str, Any],
     dict[str, Any],
     list[dict[str, Any]],
     int,
     Any,
-    Optional[float],
+    float | None,
     float,
     float,
 ]
 
 # Node with a single relevance float appended at the end
-NodeRelevanceRow = Tuple[
+NodeRelevanceRow = tuple[
     str,
-    Optional[str],
+    str | None,
     list[str],
     dict[str, Any],
-    Optional[str],
+    str | None,
     Any,
     dict[str, Any],
     dict[str, Any],
     list[dict[str, Any]],
     int,
     Any,
-    Optional[float],
+    float | None,
     float,
 ]
 
@@ -162,13 +163,13 @@ class TriggerFiredPayloadTD(TypedDict, total=False):
 
 class RefreshedPayloadTD(TypedDict, total=False):
     drift_score: float
-    previous_ref: Optional[str]
-    embedding_ref: Optional[str]
+    previous_ref: str | None
+    embedding_ref: str | None
 
 
 class RecentEventTD(TypedDict, total=False):
     type: str
-    created_at: Optional[str]
+    created_at: str | None
     payload: dict[str, Any]
 
 

@@ -6,10 +6,9 @@ per-provider cursors (e.g., Drive Changes API pageToken).
 
 from __future__ import annotations
 
-import os
-
 import psycopg
 from psycopg.rows import dict_row
+
 from activekg.connectors.types import ConnectorProvider
 
 
