@@ -49,22 +49,22 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Getting Started:
-      - Quickstart (5 min): ../QUICKSTART.md
-      - Implementation Status: ../IMPLEMENTATION_STATUS.md
   - API Reference:
       - Complete API: api-reference.md
+      - Scoring Modes: SCORING_MODES.md
   - Operations Guides:
       - Security Guide: operations/security.md
       - Monitoring & Metrics: operations/monitoring.md
       - Production Deployment: operations/deployment.md
+      - Railway Self-Serve: operations/SELF_SERVE_RAILWAY.md
+      - Demo Run: operations/DEMO_RUN.md
+      - Proof Points Guide: operations/PROOF_POINTS_GUIDE.md
   - Development Guides:
       - Testing Guide: development/testing.md
       - Architecture: development/architecture.md
-  - Additional Resources:
-      - Phase 1+ Summary: ../PHASE1_PLUS_SUMMARY.md
-      - Phase 1+ Improvements: ../PHASE1_PLUS_IMPROVEMENTS.md
-      - Production Optimization: ../PRODUCTION_OPTIMIZATION_GUIDE.md
+  - Connectors:
+      - Drive Connector: DRIVE_CONNECTOR.md
+      - ANN Indexing Guide: ANN_INDEXING_GUIDE.md
 
 extra:
   social:
