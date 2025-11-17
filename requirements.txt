@@ -44,6 +44,7 @@ PyJWT[crypto]==2.8.0  # JWT authentication with RS256 support
 redis==5.0.1          # Rate limiting backend
 alembic==1.13.0       # Database migrations
 prometheus-client==0.21.0  # Observability and metrics
+tenacity==8.2.3       # Retry logic for connectors
 
 # Optional performance
 # faiss-cpu
