@@ -179,6 +179,7 @@ jobs:
           RUN_SCHEDULER: "false"
           EMBEDDING_BACKEND: sentence-transformers
           EMBEDDING_MODEL: all-MiniLM-L6-v2
+          CONNECTOR_KEK_V1: "YAC4_BiOPM5oC5GdeZ4cOucTRgiDTLob6FqSD7rNKdA="
         run: |
           uvicorn activekg.api.main:app --host 0.0.0.0 --port 8000 &
           echo $! > api_server.pid
