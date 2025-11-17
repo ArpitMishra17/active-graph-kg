@@ -205,6 +205,9 @@ class TestThresholdBehavior:
 
     def test_cosine_higher_threshold(self, client_cosine):
         """Test that cosine mode uses appropriate threshold (0.15+)."""
+        # Ensure cosine mode is set (fixtures are module-scoped so env can be overridden)
+        os.environ["HYBRID_RRF_ENABLED"] = "false"
+
         response = client_cosine.post(
             "/ask", json={"question": "completely unrelated query about astronomy"}
         )

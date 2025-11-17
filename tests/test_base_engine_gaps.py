@@ -180,7 +180,9 @@ def test_cron_expression():
 
         # Test 3b: Cron not due yet
         print("\nTest 3b: Cron not due yet")
-        node_cron.last_refreshed = datetime.now(timezone.utc) - timedelta(minutes=2)  # 2 min ago - NOT DUE
+        node_cron.last_refreshed = datetime.now(timezone.utc) - timedelta(
+            minutes=2
+        )  # 2 min ago - NOT DUE
         is_due = repo._is_due_for_refresh(node_cron)
         print("  Node last refreshed: 2 minutes ago")
         print("  Cron schedule: Every 5 minutes")
