@@ -16,7 +16,7 @@ Environment variables:
 import argparse
 import os
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 try:
     import jwt
@@ -60,7 +60,7 @@ def generate_jwt(
     Returns:
         JWT token string
     """
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
 
     payload = {
         "sub": actor_id,  # Actor ID

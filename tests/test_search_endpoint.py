@@ -3,7 +3,7 @@
 
 import json
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt
 import requests
@@ -18,9 +18,9 @@ def generate_jwt():
         "scopes": ["search:read"],
         "aud": os.getenv("JWT_AUDIENCE", "activekg"),
         "iss": os.getenv("JWT_ISSUER", "https://staging-auth.yourcompany.com"),
-        "iat": datetime.now(UTC),
-        "nbf": datetime.now(UTC),
-        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(timezone.utc),
+        "nbf": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=1),
     }
 
     secret = os.getenv("JWT_SECRET_KEY", "dev-secret-key-min-32-chars-long-for-testing")

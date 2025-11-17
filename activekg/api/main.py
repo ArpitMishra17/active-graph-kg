@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from collections import OrderedDict
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -299,7 +299,7 @@ def shutdown_event():
 
 @app.get("/health", response_model=HealthCheckResponse)
 def health() -> HealthCheckResponse:
-    now = datetime.now(UTC).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     return HealthCheckResponse(
         status="ok",
         timestamp=now,
@@ -927,7 +927,7 @@ def _background_embed(node_id: str, tenant_id: str | None = None):
         else:
             denom = (float((old**2).sum()) ** 0.5) * (float((new**2).sum()) ** 0.5)
             drift = 0.0 if denom == 0 else 1.0 - float((old @ new) / denom)
-        ts = datetime.now(UTC).isoformat()
+        ts = datetime.now(timezone.utc).isoformat()
         repo.update_node_embedding(node_id, new, drift, ts, tenant_id=n.tenant_id)
         repo.write_embedding_history(
             node_id, drift, embedding_ref=n.payload_ref, tenant_id=n.tenant_id
@@ -1228,7 +1228,7 @@ def refresh_node(
             else 0.0
         )
         drift = 0.0 if old is None or denom == 0 else 1.0 - float((old @ new) / denom)
-        ts = datetime.now(UTC).isoformat()
+        ts = datetime.now(timezone.utc).isoformat()
         repo.update_node_embedding(node_id, new, drift, ts, tenant_id=n.tenant_id)
         repo.write_embedding_history(
             node_id, drift, embedding_ref=n.payload_ref, tenant_id=n.tenant_id
@@ -1842,16 +1842,23 @@ async def ask_question(
                 results = filter_by_must_have_terms(results, must_have_terms)
 
         if not results:
+            # Determine gating score type for consistent metadata
+            rrf_enabled = os.getenv("HYBRID_RRF_ENABLED", "true").lower() == "true"
+            gating_score_type = "rrf_fused" if rrf_enabled else "cosine"
             response_data = {
                 "answer": "I couldn't find relevant information in the knowledge graph to answer your question.",
                 "citations": [],
                 "confidence": 0.0,
-                "metadata": {"searched_nodes": 0, "cited_nodes": 0, "filtered_nodes": 0},
+                "metadata": {
+                    "searched_nodes": 0,
+                    "cited_nodes": 0,
+                    "filtered_nodes": 0,
+                    "gating_score": 0.0,
+                    "gating_score_type": gating_score_type,
+                },
             }
             # Track metrics
             if METRICS_ENABLED:
-                rrf_enabled = os.getenv("HYBRID_RRF_ENABLED", "true").lower() == "true"
-                gating_score_type = "rrf_fused" if rrf_enabled else "cosine"
                 latency_ms = (time.time() - start_time) * 1000
                 track_ask_request(
                     gating_score=0.0,
@@ -1958,7 +1965,7 @@ async def ask_question(
             # Calculate age in days
             age_days = None
             if node.last_refreshed:
-                age_seconds = (datetime.now(UTC) - node.last_refreshed).total_seconds()
+                age_seconds = (datetime.now(timezone.utc) - node.last_refreshed).total_seconds()
                 age_days = age_seconds / 86400.0
 
             # Format context with metadata
@@ -2025,7 +2032,7 @@ async def ask_question(
             # Calculate age
             age_days = None
             if node.last_refreshed:
-                age_seconds = (datetime.now(UTC) - node.last_refreshed).total_seconds()
+                age_seconds = (datetime.now(timezone.utc) - node.last_refreshed).total_seconds()
                 age_days = round(age_seconds / 86400.0, 2)
 
             citations.append(
@@ -2215,7 +2222,7 @@ async def ask_stream(
             for i, (node, similarity) in enumerate(filtered_results):
                 age_days = None
                 if node.last_refreshed:
-                    age_seconds = (datetime.now(UTC) - node.last_refreshed).total_seconds()
+                    age_seconds = (datetime.now(timezone.utc) - node.last_refreshed).total_seconds()
                     age_days = age_seconds / 86400.0
                 text = node.props.get("text", "")[
                     :ASK_SNIPPET_LEN
@@ -2268,7 +2275,7 @@ async def ask_stream(
                 lineage = repo.get_lineage(node.id, max_depth=3)
                 age_days = None
                 if node.last_refreshed:
-                    age_seconds = (datetime.now(UTC) - node.last_refreshed).total_seconds()
+                    age_seconds = (datetime.now(timezone.utc) - node.last_refreshed).total_seconds()
                     age_days = round(age_seconds / 86400.0, 2)
                 citations.append(
                     {
@@ -2622,7 +2629,7 @@ async def admin_refresh(
                         drift = 0.0
 
                     # Update
-                    timestamp = datetime.now(UTC).isoformat()
+                    timestamp = datetime.now(timezone.utc).isoformat()
                     repo.update_node_embedding(
                         node.id, new, drift, timestamp, tenant_id=node.tenant_id
                     )

@@ -20,7 +20,7 @@ Env vars:
 import argparse
 import os
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import psycopg
 import requests
@@ -42,7 +42,7 @@ def make_admin_token(tenant_id: str) -> str:
     algorithm = os.getenv("JWT_ALGORITHM", "HS256")
     audience = os.getenv("JWT_AUDIENCE", "activekg")
     issuer = os.getenv("JWT_ISSUER", "https://staging-auth.yourcompany.com")
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": "admin_batch_refresh",
         "tenant_id": tenant_id,

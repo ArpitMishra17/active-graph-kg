@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from time import time as _now
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -110,7 +110,7 @@ class RefreshScheduler:
                 )
 
                 # Update node embedding, drift, and timestamp (now in dedicated columns)
-                timestamp = datetime.now(UTC).isoformat()
+                timestamp = datetime.now(timezone.utc).isoformat()
                 self.repo.update_node_embedding(
                     node.id, new, drift, timestamp, tenant_id=node.tenant_id
                 )

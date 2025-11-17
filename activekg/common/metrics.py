@@ -3,7 +3,7 @@ import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -93,7 +93,7 @@ class MetricsCollector:
                 "counters": dict(self._counters),
                 "gauges": dict(self._gauges),
                 "histograms": {k: self.get_histogram_stats(k) for k in self._histograms.keys()},
-                "timestamp": datetime.now(UTC).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
     def _make_key(self, name: str, labels: dict[str, str] | None) -> str:

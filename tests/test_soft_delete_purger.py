@@ -16,7 +16,7 @@ Usage:
 import json
 import os
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
@@ -92,7 +92,7 @@ def mark_node_deleted(node_id: str, grace_hours: int = -1, tenant_id: str = "def
     from psycopg_pool import ConnectionPool
 
     # Calculate grace period timestamp
-    grace_until = datetime.now(UTC) + timedelta(hours=grace_hours)
+    grace_until = datetime.now(timezone.utc) + timedelta(hours=grace_hours)
     grace_until_str = grace_until.isoformat()
 
     pool = ConnectionPool(DSN, min_size=1, max_size=2)

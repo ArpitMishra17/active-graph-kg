@@ -2,7 +2,7 @@
 """Generate test JWT tokens for backend testing."""
 
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt
 
@@ -18,7 +18,7 @@ def generate_token(tenant_id="test_tenant", scopes=None, user_id="test-user"):
     if scopes is None:
         scopes = ["read", "write", "admin:refresh"]
 
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
         "tenant_id": tenant_id,

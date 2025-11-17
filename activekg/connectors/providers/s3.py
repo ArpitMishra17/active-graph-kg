@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import io
 import os
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import boto3
 import pdfplumber
@@ -86,7 +86,7 @@ class S3Connector(BaseConnector):
             metadata={
                 "etag": obj.get("ETag", "").strip('"'),
                 "modified_at": (
-                    obj.get("LastModified").astimezone(UTC).isoformat()
+                    obj.get("LastModified").astimezone(timezone.utc).isoformat()
                     if isinstance(obj.get("LastModified"), datetime)
                     else None
                 ),

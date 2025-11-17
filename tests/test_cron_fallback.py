@@ -8,7 +8,7 @@ silently stalling refresh.
 
 import os
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Add project to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -35,7 +35,7 @@ def test_cron_fallback_to_interval():
             "cron": "INVALID_CRON_EXPRESSION",  # Bad cron
             "interval": "5m",  # Valid interval
         },
-        last_refreshed=datetime.now(UTC) - timedelta(minutes=6),  # 6 min ago
+        last_refreshed=datetime.now(timezone.utc) - timedelta(minutes=6),  # 6 min ago
         tenant_id="test",
     )
 
@@ -69,7 +69,7 @@ def test_cron_fallback_without_interval():
         refresh_policy={
             "cron": "INVALID_CRON_EXPRESSION"  # Bad cron, no interval
         },
-        last_refreshed=datetime.now(UTC) - timedelta(minutes=6),
+        last_refreshed=datetime.now(timezone.utc) - timedelta(minutes=6),
         tenant_id="test",
     )
 
@@ -104,7 +104,7 @@ def test_valid_cron_no_fallback():
             "cron": "*/10 * * * *",  # Valid cron: every 10 minutes
             "interval": "5m",  # Interval: every 5 minutes (should be ignored)
         },
-        last_refreshed=datetime.now(UTC) - timedelta(minutes=7),  # 7 min ago
+        last_refreshed=datetime.now(timezone.utc) - timedelta(minutes=7),  # 7 min ago
         tenant_id="test",
     )
 

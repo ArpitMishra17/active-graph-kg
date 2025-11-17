@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Debug JWT generation."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt
 
@@ -13,9 +13,9 @@ payload = {
     "scopes": ["nodes:write", "admin:refresh"],
     "aud": "activekg",
     "iss": "https://staging-auth.yourcompany.com",
-    "iat": datetime.now(UTC),
-    "nbf": datetime.now(UTC),
-    "exp": datetime.now(UTC) + timedelta(hours=1),
+    "iat": datetime.now(timezone.utc),
+    "nbf": datetime.now(timezone.utc),
+    "exp": datetime.now(timezone.utc) + timedelta(hours=1),
 }
 
 secret = "dev-secret-key-min-32-chars-long-for-testing"

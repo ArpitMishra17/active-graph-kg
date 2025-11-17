@@ -32,7 +32,7 @@ import json
 import os
 import sys
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +61,7 @@ ID_MAP_FILE = SCRIPT_DIR / "id_map.json"
 
 def make_token(tenant_id: str, scopes: list[str]) -> str:
     """Generate JWT token for API authentication."""
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": "seed_script",
         "tenant_id": tenant_id,

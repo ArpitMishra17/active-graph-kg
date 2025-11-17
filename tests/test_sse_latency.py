@@ -3,7 +3,7 @@
 
 import sys
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Generate test JWT
 import jwt
@@ -16,7 +16,7 @@ ISSUER = "https://test-auth.activekg.local"
 
 
 def generate_token():
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": "test-user",
         "tenant_id": "test_tenant",

@@ -5,7 +5,7 @@ import logging
 import sys
 import time
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from functools import wraps
 from typing import Any
 

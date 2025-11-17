@@ -13,7 +13,7 @@ Usage:
 
 import os
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -31,7 +31,7 @@ JWT_ALG = os.getenv("JWT_ALGORITHM", "HS256")
 
 def make_token(tenant_id, scopes):
     """Generate JWT token for testing."""
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": "e2e_user",
         "tenant_id": tenant_id,

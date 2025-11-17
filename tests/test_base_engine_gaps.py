@@ -10,7 +10,7 @@ Run with: python test_base_engine_gaps.py
 
 import os
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
@@ -69,7 +69,7 @@ def test_weighted_search():
         classes=["TestDoc"],
         props={"text": "Old stale document with high drift"},
         embedding=np.random.rand(384).astype(np.float32),
-        last_refreshed=datetime.now(UTC) - timedelta(days=30),  # 30 days old
+        last_refreshed=datetime.now(timezone.utc) - timedelta(days=30),  # 30 days old
         drift_score=0.5,  # High drift
         tenant_id="test_weighted",
     )
@@ -79,7 +79,7 @@ def test_weighted_search():
         props={"text": "Fresh recent document with low drift"},
         embedding=old_node.embedding
         + np.random.rand(384).astype(np.float32) * 0.01,  # Very similar
-        last_refreshed=datetime.now(UTC) - timedelta(hours=1),  # 1 hour old
+        last_refreshed=datetime.now(timezone.utc) - timedelta(hours=1),  # 1 hour old
         drift_score=0.05,  # Low drift
         tenant_id="test_weighted",
     )
@@ -158,7 +158,7 @@ def test_cron_expression():
         props={"text": "Node with cron policy"},
         embedding=np.random.rand(384).astype(np.float32),
         refresh_policy={"cron": "*/5 * * * *"},
-        last_refreshed=datetime.now(UTC) - timedelta(minutes=6),  # 6 min ago - DUE
+        last_refreshed=datetime.now(timezone.utc) - timedelta(minutes=6),  # 6 min ago - DUE
         tenant_id="test_cron",
     )
 
@@ -180,7 +180,7 @@ def test_cron_expression():
 
         # Test 3b: Cron not due yet
         print("\nTest 3b: Cron not due yet")
-        node_cron.last_refreshed = datetime.now(UTC) - timedelta(minutes=2)  # 2 min ago - NOT DUE
+        node_cron.last_refreshed = datetime.now(timezone.utc) - timedelta(minutes=2)  # 2 min ago - NOT DUE
         is_due = repo._is_due_for_refresh(node_cron)
         print("  Node last refreshed: 2 minutes ago")
         print("  Cron schedule: Every 5 minutes")
@@ -203,7 +203,7 @@ def test_cron_expression():
                 "cron": "*/10 * * * *",  # Every 10 minutes
                 "interval": "5m",  # Every 5 minutes (should be ignored)
             },
-            last_refreshed=datetime.now(UTC) - timedelta(minutes=7),  # 7 min ago
+            last_refreshed=datetime.now(timezone.utc) - timedelta(minutes=7),  # 7 min ago
             tenant_id="test_cron",
         )
 
@@ -238,7 +238,7 @@ def _age_str(last_refreshed):
     """Helper to format age"""
     if not last_refreshed:
         return "never"
-    age = datetime.now(UTC) - last_refreshed
+    age = datetime.now(timezone.utc) - last_refreshed
     if age.days > 0:
         return f"{age.days}d"
     hours = age.seconds // 3600

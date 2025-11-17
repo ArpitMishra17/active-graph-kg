@@ -5,7 +5,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -212,7 +212,7 @@ class IncrementalIndexManager:
             self.stats["total_changes_processed"] += processed
             self.stats["successful_updates"] += processed
             self.stats["failed_updates"] += errors
-            self.stats["last_update_time"] = datetime.now(UTC).isoformat()
+            self.stats["last_update_time"] = datetime.now(timezone.utc).isoformat()
 
             # Save updated indexes if we processed any changes
             if processed > 0:

@@ -5,7 +5,7 @@ import os
 import time
 from collections.abc import Sequence
 from contextlib import contextmanager
-from datetime import UTC
+from datetime import timezone
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
 import numpy as np
@@ -857,7 +857,7 @@ class GraphRepository:
                     from datetime import datetime
 
                     weighted_results: list[tuple[Node, float]] = []
-                    now = datetime.now(UTC)
+                    now = datetime.now(timezone.utc)
 
                     for node, similarity in results:
                         # Calculate age in days
@@ -1380,7 +1380,7 @@ class GraphRepository:
         # Get last_refreshed from node (queried from DB column)
         last_refreshed = getattr(node, "last_refreshed", None)
 
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
 
         # PRECEDENCE: cron > interval (with fallback)
         # Parse cron policy: {"cron": "*/5 * * * *"}
@@ -1829,7 +1829,7 @@ class GraphRepository:
                 )
 
                 anomalies = []
-                now = datetime.now(UTC)
+                now = datetime.now(timezone.utc)
 
                 for row in cur.fetchall():
                     node_id = str(row[0])

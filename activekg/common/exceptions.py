@@ -2,7 +2,7 @@
 
 import traceback
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -37,7 +37,7 @@ class SearchSystemException(Exception):
         self.details = details or {}
         self.cause = cause
         self.request_id = str(uuid.uuid4())
-        self.timestamp = datetime.now(UTC).isoformat()
+        self.timestamp = datetime.now(timezone.utc).isoformat()
 
     def to_dict(self) -> dict[str, Any]:
         return {
