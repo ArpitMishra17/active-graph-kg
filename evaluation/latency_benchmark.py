@@ -18,20 +18,17 @@ import argparse
 import json
 import sys
 import time
-from datetime import datetime
-from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import requests
+from datetime import datetime
+from typing import Any
+
 import numpy as np
+import requests
 
 
 def benchmark_endpoint(
-    url: str,
-    method: str,
-    payload: Dict[str, Any],
-    num_requests: int,
-    timeout: int = 30
-) -> List[float]:
+    url: str, method: str, payload: dict[str, Any], num_requests: int, timeout: int = 30
+) -> list[float]:
     """Benchmark a single endpoint.
 
     Args:
@@ -73,11 +70,11 @@ def benchmark_endpoint(
 def benchmark_endpoint_concurrent(
     url: str,
     method: str,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     num_requests: int,
     concurrency: int,
-    timeout: int = 30
-) -> List[float]:
+    timeout: int = 30,
+) -> list[float]:
     """Benchmark endpoint with concurrent requests.
 
     Args:
@@ -130,8 +127,8 @@ def run_latency_benchmarks(
     num_requests: int = 100,
     concurrency: int = 1,
     warmup: int = 10,
-    skip_ask: bool = False
-) -> Dict[str, Any]:
+    skip_ask: bool = False,
+) -> dict[str, Any]:
     """Run latency benchmarks for all endpoints.
 
     Args:
@@ -160,39 +157,41 @@ def run_latency_benchmarks(
             "url": f"{api_url}/search",
             "method": "POST",
             "payload": {"query": "test query", "top_k": 10, "use_weighted_score": False},
-            "sla_p95": 0.100  # 100ms
+            "sla_p95": 0.100,  # 100ms
         },
         {
             "name": "/search (weighted)",
             "url": f"{api_url}/search",
             "method": "POST",
             "payload": {"query": "test query", "top_k": 10, "use_weighted_score": True},
-            "sla_p95": 0.200  # 200ms
+            "sla_p95": 0.200,  # 200ms
         },
         {
             "name": "/admin/anomalies",
             "url": f"{api_url}/admin/anomalies",
             "method": "GET",
             "payload": {"types": "drift_spike"},
-            "sla_p95": 0.500  # 500ms
+            "sla_p95": 0.500,  # 500ms
         },
         {
             "name": "/health",
             "url": f"{api_url}/health",
             "method": "GET",
             "payload": {},
-            "sla_p95": 0.050  # 50ms
-        }
+            "sla_p95": 0.050,  # 50ms
+        },
     ]
 
     if not skip_ask:
-        endpoints.append({
-            "name": "/ask",
-            "url": f"{api_url}/ask",
-            "method": "POST",
-            "payload": {"question": "What is Active Graph KG?", "max_results": 5},
-            "sla_p95": 2.000  # 2s (Groq)
-        })
+        endpoints.append(
+            {
+                "name": "/ask",
+                "url": f"{api_url}/ask",
+                "method": "POST",
+                "payload": {"question": "What is Active Graph KG?", "max_results": 5},
+                "sla_p95": 2.000,  # 2s (Groq)
+            }
+        )
 
     results = {}
 
@@ -212,13 +211,15 @@ def run_latency_benchmarks(
         # Actual benchmark
         start_time = time.time()
         if concurrency > 1:
-            latencies = benchmark_endpoint_concurrent(url, method, payload, num_requests, concurrency, timeout=30)
+            latencies = benchmark_endpoint_concurrent(
+                url, method, payload, num_requests, concurrency, timeout=30
+            )
         else:
             latencies = benchmark_endpoint(url, method, payload, num_requests, timeout=30)
         total_time = time.time() - start_time
 
         if not latencies:
-            print(f"  ⚠ No successful requests\n")
+            print("  ⚠ No successful requests\n")
             results[name] = {"error": "No successful requests"}
             continue
 
@@ -236,7 +237,9 @@ def run_latency_benchmarks(
         meets_sla = p95 <= sla_p95
         sla_status = "✅" if meets_sla else "⚠"
 
-        print(f"  {sla_status} p50: {p50*1000:.1f}ms, p95: {p95*1000:.1f}ms, p99: {p99*1000:.1f}ms")
+        print(
+            f"  {sla_status} p50: {p50 * 1000:.1f}ms, p95: {p95 * 1000:.1f}ms, p99: {p99 * 1000:.1f}ms"
+        )
         print(f"  Throughput: {throughput:.1f} req/s, Success: {len(latencies)}/{num_requests}\n")
 
         results[name] = {
@@ -245,12 +248,12 @@ def run_latency_benchmarks(
                 "p95": float(p95),
                 "p99": float(p99),
                 "mean": float(mean),
-                "std": float(std)
+                "std": float(std),
             },
             "throughput": float(throughput),
             "success_rate": len(latencies) / num_requests,
             "sla_p95": sla_p95,
-            "meets_sla": meets_sla
+            "meets_sla": meets_sla,
         }
 
     # Summary
@@ -278,10 +281,16 @@ def main():
     parser = argparse.ArgumentParser(description="Latency Benchmark")
     parser.add_argument("--api-url", default="http://localhost:8000", help="API base URL")
     parser.add_argument("--num-requests", type=int, default=100, help="Requests per endpoint")
-    parser.add_argument("--concurrency", type=int, default=1, help="Concurrent workers (1 = sequential)")
+    parser.add_argument(
+        "--concurrency", type=int, default=1, help="Concurrent workers (1 = sequential)"
+    )
     parser.add_argument("--warmup", type=int, default=10, help="Warmup requests")
-    parser.add_argument("--skip-ask", action="store_true", help="Skip /ask endpoint (if LLM not enabled)")
-    parser.add_argument("--output", default="evaluation/latency_results.json", help="Output JSON file")
+    parser.add_argument(
+        "--skip-ask", action="store_true", help="Skip /ask endpoint (if LLM not enabled)"
+    )
+    parser.add_argument(
+        "--output", default="evaluation/latency_results.json", help="Output JSON file"
+    )
     args = parser.parse_args()
 
     try:
@@ -291,7 +300,7 @@ def main():
             num_requests=args.num_requests,
             concurrency=args.concurrency,
             warmup=args.warmup,
-            skip_ask=args.skip_ask
+            skip_ask=args.skip_ask,
         )
 
         # Save results
@@ -303,11 +312,11 @@ def main():
                 "num_requests": args.num_requests,
                 "concurrency": args.concurrency,
                 "warmup": args.warmup,
-                "skip_ask": args.skip_ask
-            }
+                "skip_ask": args.skip_ask,
+            },
         }
 
-        with open(args.output, 'w') as f:
+        with open(args.output, "w") as f:
             json.dump(output, f, indent=2)
 
         print(f"\n✓ Results saved to {args.output}")
@@ -323,6 +332,7 @@ def main():
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

@@ -416,7 +416,7 @@ VITE_API_URL=         # Empty = use Vite proxy (default)
 
 **Backend** (`.env.test`):
 ```bash
-ACTIVEKG_DSN=postgresql://activekg:activekg@localhost:5433/activekg
+ACTIVEKG_DSN=postgresql://activekg:activekg@localhost:5432/activekg
 GROQ_API_KEY=your-groq-api-key-here
 LLM_ENABLED=true
 LLM_BACKEND=groq

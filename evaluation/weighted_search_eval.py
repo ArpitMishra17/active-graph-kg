@@ -23,16 +23,17 @@ import json
 import sys
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
-import requests
+from typing import Any
+
 import numpy as np
+import requests
 
 
 def calculate_metrics(
-    results_list: List[Dict[str, Any]],
-    ground_truth: Dict[str, List[str]],
-    k_values: List[int] = [1, 5, 10, 20]
-) -> Dict[str, Any]:
+    results_list: list[dict[str, Any]],
+    ground_truth: dict[str, list[str]],
+    k_values: list[int] = None,
+) -> dict[str, Any]:
     """Calculate retrieval metrics.
 
     Args:
@@ -43,6 +44,8 @@ def calculate_metrics(
     Returns:
         Dict with recall@k, MRR, NDCG, age, and drift metrics
     """
+    if k_values is None:
+        k_values = [1, 5, 10, 20]
     recall_at_k = {k: [] for k in k_values}
     reciprocal_ranks = []
     ndcg_scores = []
@@ -103,24 +106,22 @@ def calculate_metrics(
 
     # Aggregate metrics
     metrics = {
-        "recall": {f"recall@{k}": np.mean(recall_at_k[k]) if recall_at_k[k] else 0.0
-                   for k in k_values},
+        "recall": {
+            f"recall@{k}": np.mean(recall_at_k[k]) if recall_at_k[k] else 0.0 for k in k_values
+        },
         "mrr": np.mean(reciprocal_ranks) if reciprocal_ranks else 0.0,
         "ndcg@10": np.mean(ndcg_scores) if ndcg_scores else 0.0,
         "avg_age_days": np.mean(avg_ages) if avg_ages else 0.0,
         "avg_drift_score": np.mean(avg_drifts) if avg_drifts else 0.0,
-        "num_queries": len(reciprocal_ranks)
+        "num_queries": len(reciprocal_ranks),
     }
 
     return metrics
 
 
 def run_search_queries(
-    api_url: str,
-    queries: List[str],
-    top_k: int = 20,
-    use_weighted: bool = False
-) -> List[Dict[str, Any]]:
+    api_url: str, queries: list[str], top_k: int = 20, use_weighted: bool = False
+) -> list[dict[str, Any]]:
     """Run search queries and collect results.
 
     Args:
@@ -138,20 +139,13 @@ def run_search_queries(
         try:
             resp = requests.post(
                 f"{api_url}/search",
-                json={
-                    "query": query,
-                    "top_k": top_k,
-                    "use_weighted_score": use_weighted
-                },
-                timeout=10
+                json={"query": query, "top_k": top_k, "use_weighted_score": use_weighted},
+                timeout=10,
             )
             resp.raise_for_status()
             data = resp.json()
 
-            results_list.append({
-                "query": query,
-                "results": data.get("results", [])
-            })
+            results_list.append({"query": query, "results": data.get("results", [])})
         except Exception as e:
             print(f"⚠ Query failed: {query[:50]}... ({e})")
             continue
@@ -160,11 +154,8 @@ def run_search_queries(
 
 
 def compare_weighted_vs_baseline(
-    api_url: str,
-    test_queries: List[str],
-    ground_truth: Dict[str, List[str]],
-    top_k: int = 20
-) -> Dict[str, Any]:
+    api_url: str, test_queries: list[str], ground_truth: dict[str, list[str]], top_k: int = 20
+) -> dict[str, Any]:
     """Compare weighted vs baseline search quality.
 
     Args:
@@ -211,33 +202,57 @@ def compare_weighted_vs_baseline(
     print(f"✓ Time: {weighted_time:.2f}s\n")
 
     # 3. Calculate deltas
-    delta_recall10 = weighted_metrics["recall"]["recall@10"] - baseline_metrics["recall"]["recall@10"]
+    delta_recall10 = (
+        weighted_metrics["recall"]["recall@10"] - baseline_metrics["recall"]["recall@10"]
+    )
     delta_mrr = weighted_metrics["mrr"] - baseline_metrics["mrr"]
     delta_age = weighted_metrics["avg_age_days"] - baseline_metrics["avg_age_days"]
     delta_drift = weighted_metrics["avg_drift_score"] - baseline_metrics["avg_drift_score"]
 
     # Percentage changes
-    recall10_pct = (delta_recall10 / baseline_metrics["recall"]["recall@10"] * 100) if baseline_metrics["recall"]["recall@10"] > 0 else 0
+    recall10_pct = (
+        (delta_recall10 / baseline_metrics["recall"]["recall@10"] * 100)
+        if baseline_metrics["recall"]["recall@10"] > 0
+        else 0
+    )
     mrr_pct = (delta_mrr / baseline_metrics["mrr"] * 100) if baseline_metrics["mrr"] > 0 else 0
-    age_pct = (delta_age / baseline_metrics["avg_age_days"] * 100) if baseline_metrics["avg_age_days"] > 0 else 0
-    drift_pct = (delta_drift / baseline_metrics["avg_drift_score"] * 100) if baseline_metrics["avg_drift_score"] > 0 else 0
+    age_pct = (
+        (delta_age / baseline_metrics["avg_age_days"] * 100)
+        if baseline_metrics["avg_age_days"] > 0
+        else 0
+    )
+    drift_pct = (
+        (delta_drift / baseline_metrics["avg_drift_score"] * 100)
+        if baseline_metrics["avg_drift_score"] > 0
+        else 0
+    )
 
     # 4. Report results
     print("=" * 70)
     print("RESULTS SUMMARY")
     print("=" * 70)
     print("Accuracy Metrics:")
-    print(f"  Recall@10:  {baseline_metrics['recall']['recall@10']:.3f} → {weighted_metrics['recall']['recall@10']:.3f} ({delta_recall10:+.3f}, {recall10_pct:+.1f}%)")
-    print(f"  MRR:        {baseline_metrics['mrr']:.3f} → {weighted_metrics['mrr']:.3f} ({delta_mrr:+.3f}, {mrr_pct:+.1f}%)")
+    print(
+        f"  Recall@10:  {baseline_metrics['recall']['recall@10']:.3f} → {weighted_metrics['recall']['recall@10']:.3f} ({delta_recall10:+.3f}, {recall10_pct:+.1f}%)"
+    )
+    print(
+        f"  MRR:        {baseline_metrics['mrr']:.3f} → {weighted_metrics['mrr']:.3f} ({delta_mrr:+.3f}, {mrr_pct:+.1f}%)"
+    )
     print(f"  NDCG@10:    {baseline_metrics['ndcg@10']:.3f} → {weighted_metrics['ndcg@10']:.3f}")
     print()
     print("Freshness Metrics:")
-    print(f"  Avg Age:    {baseline_metrics['avg_age_days']:.1f}d → {weighted_metrics['avg_age_days']:.1f}d ({delta_age:+.1f}d, {age_pct:+.1f}%)")
-    print(f"  Avg Drift:  {baseline_metrics['avg_drift_score']:.3f} → {weighted_metrics['avg_drift_score']:.3f} ({delta_drift:+.3f}, {drift_pct:+.1f}%)")
+    print(
+        f"  Avg Age:    {baseline_metrics['avg_age_days']:.1f}d → {weighted_metrics['avg_age_days']:.1f}d ({delta_age:+.1f}d, {age_pct:+.1f}%)"
+    )
+    print(
+        f"  Avg Drift:  {baseline_metrics['avg_drift_score']:.3f} → {weighted_metrics['avg_drift_score']:.3f} ({delta_drift:+.3f}, {drift_pct:+.1f}%)"
+    )
     print()
     print("Performance:")
     print(f"  Baseline time: {baseline_time:.2f}s")
-    print(f"  Weighted time: {weighted_time:.2f}s ({(weighted_time - baseline_time):+.2f}s, {((weighted_time / baseline_time - 1) * 100):+.1f}%)")
+    print(
+        f"  Weighted time: {weighted_time:.2f}s ({(weighted_time - baseline_time):+.2f}s, {((weighted_time / baseline_time - 1) * 100):+.1f}%)"
+    )
     print()
 
     # Check against expected results
@@ -266,26 +281,25 @@ def compare_weighted_vs_baseline(
             "avg_age_days": delta_age,
             "avg_age_percent": age_pct,
             "avg_drift": delta_drift,
-            "avg_drift_percent": drift_pct
+            "avg_drift_percent": drift_pct,
         },
         "meets_expectations": {
             "recall_in_range": recall_in_range,
             "age_improvement": age_improvement,
-            "drift_improvement": drift_improvement
+            "drift_improvement": drift_improvement,
         },
-        "timing": {
-            "baseline": baseline_time,
-            "weighted": weighted_time
-        }
+        "timing": {"baseline": baseline_time, "weighted": weighted_time},
     }
 
 
-def load_test_data(queries_file: str, ground_truth_file: str) -> Tuple[List[str], Dict[str, List[str]]]:
+def load_test_data(
+    queries_file: str, ground_truth_file: str
+) -> tuple[list[str], dict[str, list[str]]]:
     """Load test queries and ground truth from JSON files."""
-    with open(queries_file, 'r') as f:
+    with open(queries_file) as f:
         queries = json.load(f)
 
-    with open(ground_truth_file, 'r') as f:
+    with open(ground_truth_file) as f:
         ground_truth = json.load(f)
 
     return queries, ground_truth
@@ -294,10 +308,18 @@ def load_test_data(queries_file: str, ground_truth_file: str) -> Tuple[List[str]
 def main():
     parser = argparse.ArgumentParser(description="Weighted Search Evaluation")
     parser.add_argument("--api-url", default="http://localhost:8000", help="API base URL")
-    parser.add_argument("--queries", default="evaluation/datasets/test_queries.json", help="Test queries JSON file")
-    parser.add_argument("--ground-truth", default="evaluation/datasets/ground_truth.json", help="Ground truth JSON file")
+    parser.add_argument(
+        "--queries", default="evaluation/datasets/test_queries.json", help="Test queries JSON file"
+    )
+    parser.add_argument(
+        "--ground-truth",
+        default="evaluation/datasets/ground_truth.json",
+        help="Ground truth JSON file",
+    )
     parser.add_argument("--top-k", type=int, default=20, help="Number of results to retrieve")
-    parser.add_argument("--output", default="evaluation/weighted_search_results.json", help="Output JSON file")
+    parser.add_argument(
+        "--output", default="evaluation/weighted_search_results.json", help="Output JSON file"
+    )
     args = parser.parse_args()
 
     try:
@@ -306,10 +328,7 @@ def main():
 
         # Run evaluation
         results = compare_weighted_vs_baseline(
-            args.api_url,
-            queries,
-            ground_truth,
-            top_k=args.top_k
+            args.api_url, queries, ground_truth, top_k=args.top_k
         )
 
         # Save results
@@ -317,10 +336,10 @@ def main():
         results["config"] = {
             "api_url": args.api_url,
             "top_k": args.top_k,
-            "num_queries": len(queries)
+            "num_queries": len(queries),
         }
 
-        with open(args.output, 'w') as f:
+        with open(args.output, "w") as f:
             json.dump(results, f, indent=2)
 
         print(f"\n✓ Results saved to {args.output}")
@@ -335,6 +354,7 @@ def main():
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

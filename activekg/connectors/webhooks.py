@@ -11,21 +11,20 @@ Security features:
   - URL-decoded S3 keys (handles spaces/special chars)
   - Prometheus metrics for observability
 """
+
 from __future__ import annotations
 
-import os
 import json
 import logging
-from typing import Optional
-from datetime import datetime, timedelta
+import os
+from datetime import datetime
 from urllib.parse import unquote_plus
 
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
 import redis
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.responses import JSONResponse
 from prometheus_client import Counter
 
-from activekg.connectors.base import ChangeItem
 from activekg.connectors.sns_verify import verify_sns_message
 
 logger = logging.getLogger(__name__)
@@ -34,23 +33,18 @@ router = APIRouter(prefix="/_webhooks", tags=["webhooks"])
 
 # Prometheus metrics
 webhook_sns_verify_total = Counter(
-    'webhook_sns_verify_total',
-    'Total SNS signature verifications',
-    ['result']  # success, failed, timeout, disabled
+    "webhook_sns_verify_total",
+    "Total SNS signature verifications",
+    ["result"],  # success, failed, timeout, disabled
 )
-webhook_replay_total = Counter(
-    'webhook_replay_total',
-    'Total webhook replay attempts detected'
-)
+webhook_replay_total = Counter("webhook_replay_total", "Total webhook replay attempts detected")
 webhook_topic_rejected_total = Counter(
-    'webhook_topic_rejected_total',
-    'Total webhook rejections due to TopicArn mismatch',
-    ['tenant']
+    "webhook_topic_rejected_total", "Total webhook rejections due to TopicArn mismatch", ["tenant"]
 )
 webhook_sig_version_invalid_total = Counter(
-    'webhook_sig_version_invalid_total',
-    'Total webhook rejections due to unsupported signature version',
-    ['version']
+    "webhook_sig_version_invalid_total",
+    "Total webhook rejections due to unsupported signature version",
+    ["version"],
 )
 
 
@@ -101,10 +95,7 @@ def validate_topic_arn(topic_arn: str, tenant_id: str) -> bool:
         pattern_parts = pattern.split(":")
         arn_parts = topic_arn.split(":")
         if len(pattern_parts) == len(arn_parts):
-            match = all(
-                p == "*" or p == a
-                for p, a in zip(pattern_parts, arn_parts)
-            )
+            match = all(p == "*" or p == a for p, a in zip(pattern_parts, arn_parts, strict=False))
             if match:
                 return True
 
@@ -134,7 +125,7 @@ async def enqueue_s3_event(
     bucket: str,
     key: str,
     event_name: str,
-    etag: Optional[str] = None
+    etag: str | None = None,
 ):
     """Enqueue S3 event to Redis for async processing.
 
@@ -174,10 +165,7 @@ async def enqueue_s3_event(
 
 
 @router.post("/s3")
-async def handle_s3_webhook(
-    request: Request,
-    background_tasks: BackgroundTasks
-):
+async def handle_s3_webhook(request: Request, background_tasks: BackgroundTasks):
     """Handle S3 event notification via SNS.
 
     SNS sends two message types:
@@ -211,6 +199,7 @@ async def handle_s3_webhook(
 
     # 3. Get Redis client
     from activekg.common.metrics import get_redis_client
+
     redis_client = get_redis_client()
 
     # 4. SNS message type
@@ -233,7 +222,9 @@ async def handle_s3_webhook(
         if signature_version != "1":
             logger.error(f"Unsupported signature version: {signature_version}")
             webhook_sig_version_invalid_total.labels(version=signature_version).inc()
-            raise HTTPException(status_code=400, detail=f"Unsupported signature version: {signature_version}")
+            raise HTTPException(
+                status_code=400, detail=f"Unsupported signature version: {signature_version}"
+            )
 
         # 6. Signature verification
         signature = request.headers.get("x-amz-sns-message-signature", "")
@@ -306,24 +297,14 @@ async def handle_s3_webhook(
                 if bucket and key:
                     # Enqueue in background
                     background_tasks.add_task(
-                        enqueue_s3_event,
-                        redis_client,
-                        tenant_id,
-                        bucket,
-                        key,
-                        event_name,
-                        etag
+                        enqueue_s3_event, redis_client, tenant_id, bucket, key, event_name, etag
                     )
                     queued_count += 1
             except Exception as e:
                 logger.error(f"Failed to process record: {e}")
                 continue
 
-        return JSONResponse({
-            "status": "queued",
-            "count": queued_count,
-            "tenant_id": tenant_id
-        })
+        return JSONResponse({"status": "queued", "count": queued_count, "tenant_id": tenant_id})
 
     else:
         logger.warning(f"Unknown SNS message type: {message_type}")
@@ -334,6 +315,7 @@ async def handle_s3_webhook(
 async def webhook_health():
     """Health check for webhook endpoint."""
     from activekg.common.metrics import get_redis_client
+
     try:
         redis_client = get_redis_client()
         redis_client.ping()

@@ -24,9 +24,10 @@ import json
 import sys
 import time
 from datetime import datetime
-from typing import List, Dict, Any
-import requests
+from typing import Any
+
 import numpy as np
+import requests
 
 
 def semantic_similarity(text1: str, text2: str) -> float:
@@ -55,10 +56,8 @@ def semantic_similarity(text1: str, text2: str) -> float:
 
 
 def evaluate_llm_qa(
-    api_url: str,
-    qa_dataset: List[Dict[str, Any]],
-    timeout: int = 30
-) -> Dict[str, Any]:
+    api_url: str, qa_dataset: list[dict[str, Any]], timeout: int = 30
+) -> dict[str, Any]:
     """Evaluate LLM Q&A endpoint.
 
     Args:
@@ -91,12 +90,8 @@ def evaluate_llm_qa(
             start_time = time.time()
             resp = requests.post(
                 f"{api_url}/ask",
-                json={
-                    "question": question,
-                    "max_results": 5,
-                    "use_weighted_score": True
-                },
-                timeout=timeout
+                json={"question": question, "max_results": 5, "use_weighted_score": True},
+                timeout=timeout,
             )
             latency = time.time() - start_time
             latencies.append(latency)
@@ -111,10 +106,12 @@ def evaluate_llm_qa(
             confidence = data.get("confidence", 0.0)
 
             # Measure answer accuracy (semantic similarity to ground truth)
-            accuracy = semantic_similarity(answer, ground_truth_answer) if ground_truth_answer else None
+            accuracy = (
+                semantic_similarity(answer, ground_truth_answer) if ground_truth_answer else None
+            )
 
             # Extract cited node IDs
-            cited_nodes = set([c["node_id"] for c in citations])
+            cited_nodes = {c["node_id"] for c in citations}
 
             # Calculate citation precision and recall
             if cited_nodes and relevant_nodes:
@@ -125,24 +122,28 @@ def evaluate_llm_qa(
                 precision = None
                 recall = None
 
-            results.append({
-                "question": question,
-                "answer": answer[:100] + "..." if len(answer) > 100 else answer,
-                "accuracy": accuracy,
-                "citation_precision": precision,
-                "citation_recall": recall,
-                "confidence": confidence,
-                "latency": latency,
-                "num_citations": len(citations),
-                "cited_nodes": list(cited_nodes),
-                "relevant_nodes": list(relevant_nodes)
-            })
+            results.append(
+                {
+                    "question": question,
+                    "answer": answer[:100] + "..." if len(answer) > 100 else answer,
+                    "accuracy": accuracy,
+                    "citation_precision": precision,
+                    "citation_recall": recall,
+                    "confidence": confidence,
+                    "latency": latency,
+                    "num_citations": len(citations),
+                    "cited_nodes": list(cited_nodes),
+                    "relevant_nodes": list(relevant_nodes),
+                }
+            )
 
             # Print summary
             acc_str = f"{accuracy:.2f}" if accuracy is not None else "N/A"
             prec_str = f"{precision:.2f}" if precision is not None else "N/A"
             rec_str = f"{recall:.2f}" if recall is not None else "N/A"
-            print(f"  ✓ Acc: {acc_str}, Prec: {prec_str}, Rec: {rec_str}, Conf: {confidence:.2f}, Lat: {latency:.2f}s")
+            print(
+                f"  ✓ Acc: {acc_str}, Prec: {prec_str}, Rec: {rec_str}, Conf: {confidence:.2f}, Lat: {latency:.2f}s"
+            )
 
         except requests.Timeout:
             print(f"  ⚠ Timeout after {timeout}s")
@@ -161,11 +162,13 @@ def evaluate_llm_qa(
 
     # Calculate confidence calibration (Pearson correlation)
     if len(accuracies) > 3 and len(confidences) > 3:
-        corr_pairs = [(results[i]["accuracy"], results[i]["confidence"])
-                      for i in range(len(results))
-                      if results[i]["accuracy"] is not None]
+        corr_pairs = [
+            (results[i]["accuracy"], results[i]["confidence"])
+            for i in range(len(results))
+            if results[i]["accuracy"] is not None
+        ]
         if len(corr_pairs) > 3:
-            accs, confs = zip(*corr_pairs)
+            accs, confs = zip(*corr_pairs, strict=False)
             confidence_calibration = np.corrcoef(accs, confs)[0, 1]
         else:
             confidence_calibration = None
@@ -197,7 +200,11 @@ def evaluate_llm_qa(
     print()
     print("Confidence:")
     print(f"  Mean:        {np.mean(confidences):.3f}" if confidences else "  Mean:        N/A")
-    print(f"  Calibration: {confidence_calibration:.3f}" if confidence_calibration is not None else "  Calibration: N/A")
+    print(
+        f"  Calibration: {confidence_calibration:.3f}"
+        if confidence_calibration is not None
+        else "  Calibration: N/A"
+    )
     print()
     print("Latency:")
     print(f"  p50: {p50:.2f}s" if p50 else "  p50: N/A")
@@ -227,7 +234,9 @@ def evaluate_llm_qa(
     print(f"{precision_status} Citation precision: {avg_precision:.1%} (target: >80%)")
     print(f"{recall_status} Citation recall:    {avg_recall:.1%} (target: >60%)")
     if confidence_calibration is not None:
-        print(f"{calibration_status} Confidence calib:   {confidence_calibration:.3f} (target: >0.6)")
+        print(
+            f"{calibration_status} Confidence calib:   {confidence_calibration:.3f} (target: >0.6)"
+        )
     if p95 is not None:
         print(f"{latency_status} Latency p95:        {p95:.2f}s (target: <2s)")
     print("=" * 70)
@@ -239,39 +248,37 @@ def evaluate_llm_qa(
             "accuracy": {
                 "mean": float(np.mean(accuracies)) if accuracies else None,
                 "median": float(np.median(accuracies)) if accuracies else None,
-                "std": float(np.std(accuracies)) if accuracies else None
+                "std": float(np.std(accuracies)) if accuracies else None,
             },
-            "citation_precision": {
-                "mean": float(np.mean(precisions)) if precisions else None
-            },
-            "citation_recall": {
-                "mean": float(np.mean(recalls)) if recalls else None
-            },
+            "citation_precision": {"mean": float(np.mean(precisions)) if precisions else None},
+            "citation_recall": {"mean": float(np.mean(recalls)) if recalls else None},
             "confidence": {
                 "mean": float(np.mean(confidences)) if confidences else None,
-                "calibration": float(confidence_calibration) if confidence_calibration is not None else None
+                "calibration": float(confidence_calibration)
+                if confidence_calibration is not None
+                else None,
             },
             "latency": {
                 "p50": float(p50) if p50 else None,
                 "p95": float(p95) if p95 else None,
-                "p99": float(p99) if p99 else None
-            }
+                "p99": float(p99) if p99 else None,
+            },
         },
         "meets_expectations": {
             "accuracy": accuracy_good,
             "precision": precision_good,
             "recall": recall_good,
             "calibration": calibration_good,
-            "latency": latency_good
-        }
+            "latency": latency_good,
+        },
     }
 
 
-def load_qa_dataset(filepath: str) -> List[Dict[str, Any]]:
+def load_qa_dataset(filepath: str) -> list[dict[str, Any]]:
     """Load Q&A dataset from JSON or JSONL file."""
     qa_items = []
 
-    with open(filepath, 'r') as f:
+    with open(filepath) as f:
         # Try JSON first
         try:
             data = json.load(f)
@@ -293,9 +300,15 @@ def load_qa_dataset(filepath: str) -> List[Dict[str, Any]]:
 def main():
     parser = argparse.ArgumentParser(description="LLM Q&A Evaluation")
     parser.add_argument("--api-url", default="http://localhost:8000", help="API base URL")
-    parser.add_argument("--dataset", default="evaluation/datasets/qa_questions.json", help="Q&A dataset (JSON or JSONL)")
+    parser.add_argument(
+        "--dataset",
+        default="evaluation/datasets/qa_questions.json",
+        help="Q&A dataset (JSON or JSONL)",
+    )
     parser.add_argument("--timeout", type=int, default=30, help="Request timeout in seconds")
-    parser.add_argument("--output", default="evaluation/llm_qa_results.json", help="Output JSON file")
+    parser.add_argument(
+        "--output", default="evaluation/llm_qa_results.json", help="Output JSON file"
+    )
     args = parser.parse_args()
 
     try:
@@ -316,10 +329,10 @@ def main():
         results["config"] = {
             "api_url": args.api_url,
             "dataset": args.dataset,
-            "timeout": args.timeout
+            "timeout": args.timeout,
         }
 
-        with open(args.output, 'w') as f:
+        with open(args.output, "w") as f:
             json.dump(results, f, indent=2)
 
         print(f"\n✓ Results saved to {args.output}")
@@ -339,6 +352,7 @@ def main():
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

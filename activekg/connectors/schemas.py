@@ -1,10 +1,11 @@
 """Pydantic schemas for connector configuration validation."""
+
 from pydantic import BaseModel, Field
-from typing import Optional, List
 
 
 class S3ConnectorConfig(BaseModel):
     """Configuration for S3 connector."""
+
     bucket: str
     prefix: str = ""
     region: str = "us-east-1"
@@ -16,6 +17,7 @@ class S3ConnectorConfig(BaseModel):
 
 class GCSConnectorConfig(BaseModel):
     """Configuration for Google Cloud Storage connector."""
+
     bucket: str
     prefix: str = ""
     service_account_json_path: str
@@ -25,6 +27,7 @@ class GCSConnectorConfig(BaseModel):
 
 class AzureBlobConnectorConfig(BaseModel):
     """Configuration for Azure Blob Storage connector."""
+
     container: str
     prefix: str = ""
     connection_string: str = Field(..., min_length=32)
@@ -34,6 +37,7 @@ class AzureBlobConnectorConfig(BaseModel):
 
 class ConnectorQuota(BaseModel):
     """Per-tenant quota limits."""
+
     max_docs_per_day: int = Field(default=10000, ge=1)
     max_storage_bytes: int = Field(default=10 * 1024 * 1024 * 1024, ge=1024)  # 10GB
     max_api_calls_per_hour: int = Field(default=5000, ge=1)

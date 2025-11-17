@@ -1,45 +1,57 @@
 from __future__ import annotations
 
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone
+import json
 import os
-import numpy as np
+import threading
 import time
 from collections import OrderedDict
-import json
-import threading
+from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, Depends, Body
-from fastapi.responses import PlainTextResponse, HTMLResponse, StreamingResponse
+import numpy as np
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
+from activekg.api.admin_connectors import router as connectors_admin_router
+
+# JWT authentication and rate limiting
+from activekg.api.auth import JWT_ENABLED, JWTClaims, get_jwt_claims
+from activekg.api.middleware import apply_rate_limit, get_tenant_context, require_rate_limit
+from activekg.api.rate_limiter import RATE_LIMIT_ENABLED, get_identifier, rate_limiter
 from activekg.common.logger import get_enhanced_logger
 from activekg.common.metrics import metrics
-from activekg.common.validation import SearchRequest, KGSearchRequest, AskRequest, HealthCheckResponse, MetricsResponse, NodeCreate, EdgeCreate
-from activekg.graph.models import Node, Edge
-from activekg.graph.repository import GraphRepository
+from activekg.common.validation import (
+    AskRequest,
+    EdgeCreate,
+    HealthCheckResponse,
+    KGSearchRequest,
+    MetricsResponse,
+    NodeCreate,
+)
+from activekg.connectors.cache_subscriber import get_subscriber_health
+from activekg.connectors.webhooks import router as connectors_webhook_router
 from activekg.engine.embedding_provider import EmbeddingProvider
 from activekg.engine.llm_provider import (
     LLMProvider,
-    extract_citation_numbers,
+    build_strict_citation_prompt,
     calculate_confidence,
+    extract_citation_numbers,
     filter_context_by_similarity,
-    build_strict_citation_prompt
 )
-from activekg.triggers.pattern_store import PatternStore
-from activekg.refresh.scheduler import RefreshScheduler
-from activekg.triggers.trigger_engine import TriggerEngine
-
-# JWT authentication and rate limiting
-from activekg.api.auth import get_jwt_claims, JWTClaims, JWT_ENABLED
-from activekg.api.rate_limiter import rate_limiter, get_identifier, RATE_LIMIT_ENABLED
-from activekg.api.middleware import apply_rate_limit, get_tenant_context, require_rate_limit
-from activekg.api.admin_connectors import router as connectors_admin_router
-from activekg.connectors.webhooks import router as connectors_webhook_router
-from activekg.connectors.cache_subscriber import get_subscriber_health
+from activekg.graph.models import Edge, Node
+from activekg.graph.repository import GraphRepository
 
 # Prometheus observability
-from activekg.observability import track_ask_request, track_search_request, track_embedding_health, get_metrics_handler
+from activekg.observability import (
+    get_metrics_handler,
+    track_ask_request,
+    track_embedding_health,
+    track_search_request,
+)
+from activekg.refresh.scheduler import RefreshScheduler
+from activekg.triggers.pattern_store import PatternStore
+from activekg.triggers.trigger_engine import TriggerEngine
 
 # Metrics enabled flag
 METRICS_ENABLED = os.getenv("METRICS_ENABLED", "true").lower() == "true"
@@ -48,8 +60,9 @@ METRICS_ENABLED = os.getenv("METRICS_ENABLED", "true").lower() == "true"
 # Request models
 class RotateKeysRequest(BaseModel):
     """Request model for connector key rotation endpoint."""
-    providers: Optional[List[str]] = None
-    tenants: Optional[List[str]] = None
+
+    providers: list[str] | None = None
+    tenants: list[str] | None = None
     batch_size: int = 100
     dry_run: bool = False
 
@@ -58,7 +71,7 @@ APP_VERSION = os.getenv("ACTIVEKG_VERSION", "0.1.0")
 # Prefer ACTIVEKG_DSN; fall back to DATABASE_URL for PaaS (e.g., Railway Postgres plugin)
 DSN = os.getenv(
     "ACTIVEKG_DSN",
-    os.getenv("DATABASE_URL", "postgresql://activekg:activekg@localhost:5432/activekg")
+    os.getenv("DATABASE_URL", "postgresql://activekg:activekg@localhost:5432/activekg"),
 )
 EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "sentence-transformers")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
@@ -83,10 +96,12 @@ ASK_ROUTER_TOPSIM = float(os.getenv("ASK_ROUTER_TOPSIM", "0.70"))  # Use fast if
 ASK_ROUTER_MINCONF = float(os.getenv("ASK_ROUTER_MINCONF", "0.60"))  # Fallback if conf < this
 
 # Ask/Q&A tuning knobs (env configurable)
-ASK_SIM_THRESHOLD = float(os.getenv("ASK_SIM_THRESHOLD", "0.30"))  # similarity cutoff for gating and context
-ASK_MAX_TOKENS = int(os.getenv("ASK_MAX_TOKENS", "256"))          # LLM token budget
-ASK_MAX_SNIPPETS = int(os.getenv("ASK_MAX_SNIPPETS", "3"))         # max context snippets
-ASK_SNIPPET_LEN = int(os.getenv("ASK_SNIPPET_LEN", "300"))         # chars per snippet
+ASK_SIM_THRESHOLD = float(
+    os.getenv("ASK_SIM_THRESHOLD", "0.30")
+)  # similarity cutoff for gating and context
+ASK_MAX_TOKENS = int(os.getenv("ASK_MAX_TOKENS", "256"))  # LLM token budget
+ASK_MAX_SNIPPETS = int(os.getenv("ASK_MAX_SNIPPETS", "3"))  # max context snippets
+ASK_SNIPPET_LEN = int(os.getenv("ASK_SNIPPET_LEN", "300"))  # chars per snippet
 
 # Fast path uses smaller budget for speed
 ASK_FAST_MAX_TOKENS = int(os.getenv("ASK_FAST_MAX_TOKENS", "192"))
@@ -125,30 +140,38 @@ if LLM_ENABLED:
             llm_fast = LLMProvider(backend=ASK_FAST_BACKEND, model=ASK_FAST_MODEL)
             llm_fallback = LLMProvider(backend=ASK_FALLBACK_BACKEND, model=ASK_FALLBACK_MODEL)
             llm = llm_fallback  # Default to fallback for backward compat
-            logger.info("Hybrid routing enabled", extra_fields={
-                "fast_backend": ASK_FAST_BACKEND,
-                "fast_model": ASK_FAST_MODEL,
-                "fallback_backend": ASK_FALLBACK_BACKEND,
-                "fallback_model": ASK_FALLBACK_MODEL,
-                "router_topsim": ASK_ROUTER_TOPSIM,
-                "router_minconf": ASK_ROUTER_MINCONF
-            })
+            logger.info(
+                "Hybrid routing enabled",
+                extra_fields={
+                    "fast_backend": ASK_FAST_BACKEND,
+                    "fast_model": ASK_FAST_MODEL,
+                    "fallback_backend": ASK_FALLBACK_BACKEND,
+                    "fallback_model": ASK_FALLBACK_MODEL,
+                    "router_topsim": ASK_ROUTER_TOPSIM,
+                    "router_minconf": ASK_ROUTER_MINCONF,
+                },
+            )
         else:
             # Single LLM mode
             llm = LLMProvider(backend=LLM_BACKEND, model=LLM_MODEL)
-            logger.info("LLM provider enabled", extra_fields={"backend": LLM_BACKEND, "model": LLM_MODEL})
+            logger.info(
+                "LLM provider enabled", extra_fields={"backend": LLM_BACKEND, "model": LLM_MODEL}
+            )
     except Exception as e:
-        logger.warning("LLM provider initialization failed, /ask endpoint disabled", extra_fields={"error": str(e)})
+        logger.warning(
+            "LLM provider initialization failed, /ask endpoint disabled",
+            extra_fields={"error": str(e)},
+        )
         LLM_ENABLED = False
 
 # In-memory LRU cache for /ask responses (context-aware, thread-safe)
 ASK_CACHE_MAX = int(os.getenv("ASK_CACHE_MAX", "512"))
 ASK_CACHE_TTL = int(os.getenv("ASK_CACHE_TTL", "600"))  # seconds
-_ASK_CACHE: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
+_ASK_CACHE: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 _ASK_CACHE_LOCK = threading.RLock()  # Reentrant lock for thread safety
 
 
-def _ask_cache_get(key: str) -> Optional[dict]:
+def _ask_cache_get(key: str) -> dict | None:
     """Thread-safe cache get with TTL expiration."""
     with _ASK_CACHE_LOCK:
         now = time.time()
@@ -178,17 +201,21 @@ def _ask_cache_put(key: str, value: dict) -> None:
 @app.on_event("startup")
 def startup_event():
     """Initialize system on startup."""
-    logger.info("Active Graph KG startup", extra_fields={
-        "version": APP_VERSION,
-        "weighted_search_candidate_factor": WEIGHTED_SEARCH_CANDIDATE_FACTOR,
-        "run_scheduler": RUN_SCHEDULER,
-        "rrf_low_sim_threshold": RRF_LOW_SIM_THRESHOLD,
-        "raw_low_sim_threshold": RAW_LOW_SIM_THRESHOLD
-    })
+    logger.info(
+        "Active Graph KG startup",
+        extra_fields={
+            "version": APP_VERSION,
+            "weighted_search_candidate_factor": WEIGHTED_SEARCH_CANDIDATE_FACTOR,
+            "run_scheduler": RUN_SCHEDULER,
+            "rrf_low_sim_threshold": RRF_LOW_SIM_THRESHOLD,
+            "raw_low_sim_threshold": RAW_LOW_SIM_THRESHOLD,
+        },
+    )
 
     # Quick Win 1: Fail-fast KEK validation
     try:
         from activekg.connectors.encryption import get_encryption
+
         enc = get_encryption()
         logger.info(f"KEK validation passed (active version: {enc.active_version})")
     except Exception as e:
@@ -197,8 +224,10 @@ def startup_event():
 
     # Quick Win 3: Cache warmup for connector configs
     try:
-        from activekg.connectors.config_store import get_config_store
         import os
+
+        from activekg.connectors.config_store import get_config_store
+
         if os.getenv("ACTIVEKG_DSN"):
             store = get_config_store()
             configs = store.list_all()
@@ -208,9 +237,11 @@ def startup_event():
 
     # Phase 2: Start cache subscriber for multi-worker cache invalidation
     try:
+        import os
+
         from activekg.connectors.cache_subscriber import start_subscriber
         from activekg.connectors.config_store import get_config_store
-        import os
+
         redis_url = os.getenv("REDIS_URL")
         activekg_dsn = os.getenv("ACTIVEKG_DSN")
         if redis_url and activekg_dsn:
@@ -247,7 +278,9 @@ def startup_event():
         if rate_limiter.enabled:
             logger.info("Rate limiter enabled", extra_fields={"redis_available": True})
         else:
-            logger.warning("Rate limiting requested but Redis unavailable. Limiter will fail open (allow all requests).")
+            logger.warning(
+                "Rate limiting requested but Redis unavailable. Limiter will fail open (allow all requests)."
+            )
     else:
         logger.info("Rate limiting DISABLED")
 
@@ -266,7 +299,7 @@ def shutdown_event():
 
 @app.get("/health", response_model=HealthCheckResponse)
 def health() -> HealthCheckResponse:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     return HealthCheckResponse(
         status="ok",
         timestamp=now,
@@ -279,9 +312,7 @@ def health() -> HealthCheckResponse:
 
 
 @app.get("/_admin/connectors/cache/health")
-def connector_cache_health(
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
-) -> Dict[str, Any]:
+def connector_cache_health(claims: JWTClaims | None = Depends(get_jwt_claims)) -> dict[str, Any]:
     """Health endpoint for connector cache subscriber.
 
     Security:
@@ -295,26 +326,19 @@ def connector_cache_health(
 
     if subscriber_health is None:
         # Subscriber not running
-        return {
-            "status": "degraded",
-            "subscriber": None
-        }
+        return {"status": "degraded", "subscriber": None}
 
     # Subscriber is running - check if connected
     connected = subscriber_health.get("connected", False)
     status = "ok" if connected else "degraded"
 
-    return {
-        "status": status,
-        "subscriber": subscriber_health
-    }
+    return {"status": status, "subscriber": subscriber_health}
 
 
 @app.post("/_admin/connectors/rotate_keys")
 def connector_rotate_keys(
-    request: RotateKeysRequest,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
-) -> Dict[str, Any]:
+    request: RotateKeysRequest, claims: JWTClaims | None = Depends(get_jwt_claims)
+) -> dict[str, Any]:
     """Rotate encryption keys for connector configs.
 
     Selects rows where key_version != ACTIVE_VERSION, decrypts with old key,
@@ -332,6 +356,7 @@ def connector_rotate_keys(
     """
     try:
         from activekg.connectors.config_store import get_config_store
+
         store = get_config_store()
 
         # Call rotate_keys method
@@ -339,7 +364,7 @@ def connector_rotate_keys(
             providers=request.providers,
             tenants=request.tenants,
             batch_size=request.batch_size,
-            dry_run=request.dry_run
+            dry_run=request.dry_run,
         )
 
         return result
@@ -350,10 +375,7 @@ def connector_rotate_keys(
 
 
 @app.get("/debug/dbinfo")
-def debug_dbinfo(
-    http_request: Request = None,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
-):
+def debug_dbinfo(http_request: Request = None, claims: JWTClaims | None = Depends(get_jwt_claims)):
     """Debug endpoint to inspect DB and tenant context.
 
     Security:
@@ -373,7 +395,9 @@ def debug_dbinfo(
         if not claims:
             raise HTTPException(status_code=401, detail="Authentication required")
         if "admin:refresh" not in (claims.scopes or []):
-            raise HTTPException(status_code=403, detail="Insufficient permissions. Required scope: admin:refresh")
+            raise HTTPException(
+                status_code=403, detail="Insufficient permissions. Required scope: admin:refresh"
+            )
 
     try:
         # Use a pooled connection without setting tenant_id; report current tenant context from server
@@ -401,8 +425,7 @@ def debug_dbinfo(
 
 @app.get("/debug/search_sanity")
 def debug_search_sanity(
-    http_request: Request = None,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    http_request: Request = None, claims: JWTClaims | None = Depends(get_jwt_claims)
 ):
     """Debug endpoint for retrieval sanity checks.
 
@@ -430,7 +453,9 @@ def debug_search_sanity(
         if not claims:
             raise HTTPException(status_code=401, detail="Authentication required")
         if "admin:refresh" not in (claims.scopes or []):
-            raise HTTPException(status_code=403, detail="Insufficient permissions. Required scope: admin:refresh")
+            raise HTTPException(
+                status_code=403, detail="Insufficient permissions. Required scope: admin:refresh"
+            )
 
     # Get tenant from claims or default
     tenant_id = claims.tenant_id if claims else "default"
@@ -459,8 +484,7 @@ def debug_search_sanity(
                     LIMIT 5
                 """)
                 sample_with_embedding = [
-                    {"id": row[0], "classes": row[1], "has_text": row[2]}
-                    for row in cur.fetchall()
+                    {"id": row[0], "classes": row[1], "has_text": row[2]} for row in cur.fetchall()
                 ]
 
                 # Sample nodes WITHOUT embeddings (up to 5)
@@ -472,12 +496,15 @@ def debug_search_sanity(
                     LIMIT 5
                 """)
                 sample_without_embedding = [
-                    {"id": row[0], "classes": row[1], "has_text": row[2]}
-                    for row in cur.fetchall()
+                    {"id": row[0], "classes": row[1], "has_text": row[2]} for row in cur.fetchall()
                 ]
 
-        embedding_coverage = (nodes_with_embeddings / total_nodes * 100.0) if total_nodes > 0 else 0.0
-        text_search_coverage = (nodes_with_text_search / total_nodes * 100.0) if total_nodes > 0 else 0.0
+        embedding_coverage = (
+            (nodes_with_embeddings / total_nodes * 100.0) if total_nodes > 0 else 0.0
+        )
+        text_search_coverage = (
+            (nodes_with_text_search / total_nodes * 100.0) if total_nodes > 0 else 0.0
+        )
 
         return {
             "tenant_id": tenant_id,
@@ -500,7 +527,7 @@ def debug_search_explain(
     use_hybrid: bool = Body(False, embed=True),
     top_k: int = Body(5, embed=True),
     http_request: Request = None,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Debug endpoint for detailed search result triage.
 
@@ -545,7 +572,9 @@ def debug_search_explain(
         if not claims:
             raise HTTPException(status_code=401, detail="Authentication required")
         if "admin:refresh" not in (claims.scopes or []):
-            raise HTTPException(status_code=403, detail="Insufficient permissions. Required scope: admin:refresh")
+            raise HTTPException(
+                status_code=403, detail="Insufficient permissions. Required scope: admin:refresh"
+            )
 
     # Get tenant from claims or default
     tenant_id = claims.tenant_id if claims else "default"
@@ -565,15 +594,13 @@ def debug_search_explain(
                 query_text=query,
                 top_k=top_k,
                 tenant_id=tenant_id,
-                use_reranker=ASK_USE_RERANKER
+                use_reranker=ASK_USE_RERANKER,
             )
             mode = "hybrid"
         else:
             # Vector-only search
             search_results = repo.vector_search(
-                query_embedding=query_embedding,
-                top_k=top_k,
-                tenant_id=tenant_id
+                query_embedding=query_embedding, top_k=top_k, tenant_id=tenant_id
             )
             mode = "vector"
 
@@ -603,16 +630,18 @@ def debug_search_explain(
             # text_search_vector presence not directly in result, infer from hybrid success
             has_text_search = True if use_hybrid else None
 
-            detailed_results.append({
-                "node_id": node_id,
-                "similarity": round(similarity, 4),
-                "score_type": score_type,
-                "classes": classes,
-                "snippet": snippet,
-                "metadata": metadata,
-                "has_embedding": has_embedding,
-                "has_text_search": has_text_search
-            })
+            detailed_results.append(
+                {
+                    "node_id": node_id,
+                    "similarity": round(similarity, 4),
+                    "score_type": score_type,
+                    "classes": classes,
+                    "snippet": snippet,
+                    "metadata": metadata,
+                    "has_embedding": has_embedding,
+                    "has_text_search": has_text_search,
+                }
+            )
 
         # Calculate threshold recommendations
         similarities = [r["similarity"] for r in detailed_results if r["similarity"] > 0]
@@ -641,13 +670,13 @@ def debug_search_explain(
                 "recommended_min": round(recommended_min, 2),
                 "recommended_max": round(recommended_max, 2),
                 "top_similarity": round(top_sim, 4),
-                "bottom_similarity": round(bottom_sim, 4)
+                "bottom_similarity": round(bottom_sim, 4),
             },
             "scoring_notes": {
                 "rrf_fused": "RRF scores range 0.01-0.04 (rank-based fusion of vector+BM25)",
                 "weighted_fusion": "Weighted scores range 0.0-1.0 (linear combination of vector+BM25)",
-                "cosine": "Cosine similarity range 0.0-1.0 (vector-only)"
-            }
+                "cosine": "Cosine similarity range 0.0-1.0 (vector-only)",
+            },
         }
 
     except Exception as e:
@@ -657,8 +686,7 @@ def debug_search_explain(
 
 @app.get("/debug/embed_info")
 def debug_embed_info(
-    http_request: Request = None,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    http_request: Request = None, claims: JWTClaims | None = Depends(get_jwt_claims)
 ):
     """Debug endpoint to inspect embedding configuration and stored vectors.
 
@@ -680,15 +708,17 @@ def debug_embed_info(
         if not claims:
             raise HTTPException(status_code=401, detail="Authentication required")
         if "admin:refresh" not in (claims.scopes or []):
-            raise HTTPException(status_code=403, detail="Insufficient permissions. Required scope: admin:refresh")
+            raise HTTPException(
+                status_code=403, detail="Insufficient permissions. Required scope: admin:refresh"
+            )
 
     try:
         tenant_id = claims.tenant_id if claims else "default"
         total_nodes = 0
         with_embedding = 0
         without_embedding = 0
-        db_type: Optional[str] = None
-        db_dim: Optional[int] = None
+        db_type: str | None = None
+        db_dim: int | None = None
         sampled_dims: list[int] = []
         norms: list[float] = []
         example_ids: list[str] = []
@@ -721,6 +751,7 @@ def debug_embed_info(
                     if row and row[0]:
                         db_type = str(row[0])
                         import re as _re
+
                         m = _re.search(r"vector\((\d+)\)", db_type)
                         if m:
                             db_dim = int(m.group(1))
@@ -728,9 +759,7 @@ def debug_embed_info(
                     pass
 
                 # Sample up to 100 embeddings for norm and dimension checks
-                cur.execute(
-                    "SELECT id, embedding FROM nodes WHERE embedding IS NOT NULL LIMIT 100"
-                )
+                cur.execute("SELECT id, embedding FROM nodes WHERE embedding IS NOT NULL LIMIT 100")
                 rows = cur.fetchall()
                 for rid, remb in rows:
                     try:
@@ -782,7 +811,7 @@ def debug_embed_info(
             track_embedding_health(
                 coverage_ratio=coverage_ratio,
                 max_staleness_seconds=max_staleness_seconds,
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
             )
 
         return {
@@ -796,7 +825,7 @@ def debug_embed_info(
             "vector_dimension": {
                 "db_type": db_type,
                 "db_dim": db_dim,
-                "sampled_dims": sorted(list(set(sampled_dims))) if sampled_dims else [],
+                "sampled_dims": sorted(set(sampled_dims)) if sampled_dims else [],
             },
             "sample": {
                 "n": len(norms),
@@ -811,7 +840,7 @@ def debug_embed_info(
                     "min": round(lr_age_min, 3) if lr_age_min is not None else None,
                     "avg": round(lr_age_avg, 3) if lr_age_avg is not None else None,
                     "max": round(lr_age_max, 3) if lr_age_max is not None else None,
-                }
+                },
             },
         }
 
@@ -835,10 +864,11 @@ def debug_intent(q: str):
     """
     try:
         import re
+
         # Normalize query
         question_normalized = q.lower()
-        question_normalized = re.sub(r'\bml\b', 'machine learning', question_normalized)
-        question_normalized = re.sub(r'\s+', ' ', question_normalized).strip()
+        question_normalized = re.sub(r"\bml\b", "machine learning", question_normalized)
+        question_normalized = re.sub(r"\s+", " ", question_normalized).strip()
 
         # Detect intent
         intent_type, params = detect_intent(q)
@@ -847,7 +877,7 @@ def debug_intent(q: str):
             "query": q,
             "normalized": question_normalized,
             "intent_type": intent_type,
-            "params": params
+            "params": params,
         }
     except Exception as e:
         logger.error("/debug/intent failed", extra_fields={"error": str(e), "query": q})
@@ -881,7 +911,7 @@ async def prometheus_metrics():
     return await handler()
 
 
-def _background_embed(node_id: str, tenant_id: Optional[str] = None):
+def _background_embed(node_id: str, tenant_id: str | None = None):
     """Background task to embed a node and persist embedding/drift/history."""
     try:
         n = repo.get_node(node_id, tenant_id=tenant_id)
@@ -892,22 +922,26 @@ def _background_embed(node_id: str, tenant_id: Optional[str] = None):
             return
         old = n.embedding
         new = embedder.encode([text])[0]
-        import math
         if old is None:
             drift = 0.0
         else:
-            denom = (float((old**2).sum())**0.5) * (float((new**2).sum())**0.5)
+            denom = (float((old**2).sum()) ** 0.5) * (float((new**2).sum()) ** 0.5)
             drift = 0.0 if denom == 0 else 1.0 - float((old @ new) / denom)
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         repo.update_node_embedding(node_id, new, drift, ts, tenant_id=n.tenant_id)
-        repo.write_embedding_history(node_id, drift, embedding_ref=n.payload_ref, tenant_id=n.tenant_id)
-        drift_threshold = n.refresh_policy.get('drift_threshold', 0.1) if n.refresh_policy else 0.1
+        repo.write_embedding_history(
+            node_id, drift, embedding_ref=n.payload_ref, tenant_id=n.tenant_id
+        )
+        drift_threshold = n.refresh_policy.get("drift_threshold", 0.1) if n.refresh_policy else 0.1
         if drift > drift_threshold:
-            repo.append_event(node_id, 'refreshed', {
-                'drift_score': drift,
-                'last_refreshed': ts,
-                'auto_embed': True
-            }, tenant_id=n.tenant_id, actor_id='auto_embed', actor_type='system')
+            repo.append_event(
+                node_id,
+                "refreshed",
+                {"drift_score": drift, "last_refreshed": ts, "auto_embed": True},
+                tenant_id=n.tenant_id,
+                actor_id="auto_embed",
+                actor_type="system",
+            )
     except Exception as e:
         logger.error("Background embed failed", extra_fields={"node_id": node_id, "error": str(e)})
 
@@ -917,7 +951,7 @@ def create_node(
     node: NodeCreate,
     background_tasks: BackgroundTasks,
     _rl: None = Depends(require_rate_limit("default")),
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Create a new node with validated input.
 
@@ -947,18 +981,21 @@ def create_node(
         try:
             background_tasks.add_task(_background_embed, node_id, n.tenant_id)
         except Exception as e:
-            logger.error("Failed to schedule background embed", extra_fields={"node_id": node_id, "error": str(e)})
+            logger.error(
+                "Failed to schedule background embed",
+                extra_fields={"node_id": node_id, "error": str(e)},
+            )
     return {"id": node_id}
 
 
 @app.get("/nodes/{node_id}")
 def get_node(
     node_id: str,
-    tenant_id: Optional[str] = None,
+    tenant_id: str | None = None,
     http_request: Request = None,
     http_response: Response = None,
     _rl: None = Depends(require_rate_limit("default")),
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Get a node by ID.
 
@@ -1151,11 +1188,11 @@ def demo_page():
 @app.post("/nodes/{node_id}/refresh")
 def refresh_node(
     node_id: str,
-    tenant_id: Optional[str] = None,
+    tenant_id: str | None = None,
     _rl: None = Depends(require_rate_limit("default")),
     http_request: Request = None,
     http_response: Response = None,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Manually refresh a single node's embedding and write history/events.
 
@@ -1185,28 +1222,32 @@ def refresh_node(
         text = repo.load_payload_text(n)
         old = n.embedding
         new = embedder.encode([text])[0]
-        denom = (float((old**2).sum())**0.5) * (float((new**2).sum())**0.5) if old is not None else 0.0
+        denom = (
+            (float((old**2).sum()) ** 0.5) * (float((new**2).sum()) ** 0.5)
+            if old is not None
+            else 0.0
+        )
         drift = 0.0 if old is None or denom == 0 else 1.0 - float((old @ new) / denom)
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         repo.update_node_embedding(node_id, new, drift, ts, tenant_id=n.tenant_id)
-        repo.write_embedding_history(node_id, drift, embedding_ref=n.payload_ref, tenant_id=n.tenant_id)
+        repo.write_embedding_history(
+            node_id, drift, embedding_ref=n.payload_ref, tenant_id=n.tenant_id
+        )
 
         # Emit event if drift exceeds threshold
-        drift_threshold = n.refresh_policy.get('drift_threshold', 0.1) if n.refresh_policy else 0.1
+        drift_threshold = n.refresh_policy.get("drift_threshold", 0.1) if n.refresh_policy else 0.1
         event_id = None
         if drift > drift_threshold:
-            event_id = repo.append_event(node_id, 'refreshed', {
-                'drift_score': drift,
-                'last_refreshed': ts,
-                'manual_trigger': True
-            }, tenant_id=n.tenant_id, actor_id=actor_id, actor_type='user')
+            event_id = repo.append_event(
+                node_id,
+                "refreshed",
+                {"drift_score": drift, "last_refreshed": ts, "manual_trigger": True},
+                tenant_id=n.tenant_id,
+                actor_id=actor_id,
+                actor_type="user",
+            )
 
-        return {
-            "id": node_id,
-            "drift_score": drift,
-            "last_refreshed": ts,
-            "event_id": event_id
-        }
+        return {"id": node_id, "drift_score": drift, "last_refreshed": ts, "event_id": event_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -1219,7 +1260,7 @@ def search_nodes(
     search_request: KGSearchRequest,
     http_request: Request,
     http_response: Response,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Semantic search across knowledge graph nodes using pgvector.
 
@@ -1259,7 +1300,7 @@ def search_nodes(
                 raise HTTPException(
                     status_code=429,
                     detail="Rate limit exceeded",
-                    headers={"Retry-After": str(limit_info.retry_after or 1)}
+                    headers={"Retry-After": str(limit_info.retry_after or 1)},
                 )
 
         # Embed the query
@@ -1274,7 +1315,7 @@ def search_nodes(
                 metadata_filters=search_request.metadata_filters,
                 compound_filter=search_request.compound_filter,
                 tenant_id=effective_tenant_id,
-                use_reranker=search_request.use_reranker
+                use_reranker=search_request.use_reranker,
             )
             # Fallback: if hybrid returns 0 results (e.g., text_search_vector missing), try vector-only
             if not results:
@@ -1287,7 +1328,7 @@ def search_nodes(
                         tenant_id=effective_tenant_id,
                         use_weighted_score=search_request.use_weighted_score,
                         decay_lambda=search_request.decay_lambda,
-                        drift_beta=search_request.drift_beta
+                        drift_beta=search_request.drift_beta,
                     )
                 except Exception:
                     results = []
@@ -1300,32 +1341,34 @@ def search_nodes(
                 tenant_id=effective_tenant_id,
                 use_weighted_score=search_request.use_weighted_score,
                 decay_lambda=search_request.decay_lambda,
-                drift_beta=search_request.drift_beta
+                drift_beta=search_request.drift_beta,
             )
 
         # Format response (keep "similarity" key for backward compatibility)
         # Also include a non-null text snippet to avoid clients receiving null
-        formatted_results: List[Dict[str, Any]] = []
+        formatted_results: list[dict[str, Any]] = []
         for node, similarity in results:
             raw_text = None
             try:
-                raw_text = (node.props or {}).get('text')
+                raw_text = (node.props or {}).get("text")
             except Exception:
                 raw_text = None
 
-            text_snippet = (raw_text or "")
+            text_snippet = raw_text or ""
             if isinstance(text_snippet, str) and len(text_snippet) > 300:
                 text_snippet = text_snippet[:300]
 
-            formatted_results.append({
-                "id": node.id,
-                "classes": node.classes,
-                "props": node.props,
-                "payload_ref": node.payload_ref,
-                "metadata": node.metadata,
-                "similarity": round(similarity, 4),
-                "text": text_snippet,
-            })
+            formatted_results.append(
+                {
+                    "id": node.id,
+                    "classes": node.classes,
+                    "props": node.props,
+                    "payload_ref": node.payload_ref,
+                    "metadata": node.metadata,
+                    "similarity": round(similarity, 4),
+                    "text": text_snippet,
+                }
+            )
 
         # Track Prometheus metrics (if enabled)
         if METRICS_ENABLED:
@@ -1347,7 +1390,7 @@ def search_nodes(
                 score_type=score_type,
                 latency_ms=latency_ms,
                 result_count=len(formatted_results),
-                reranked=reranked
+                reranked=reranked,
             )
 
         return {
@@ -1360,7 +1403,7 @@ def search_nodes(
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
-def detect_intent(question: str) -> tuple[Optional[str], Optional[dict]]:
+def detect_intent(question: str) -> tuple[str | None, dict | None]:
     """Detect structured query intents that need specialized retrieval.
 
     Args:
@@ -1372,36 +1415,42 @@ def detect_intent(question: str) -> tuple[Optional[str], Optional[dict]]:
         - intent_params: Dict with extracted parameters (role_terms, expected_classes, must_have_terms, etc.)
     """
     import re
+
     # Normalize query before processing
     question_normalized = question.lower()
     # Normalize "ML" → "machine learning" for better pattern matching
-    question_normalized = re.sub(r'\bml\b', 'machine learning', question_normalized)
+    question_normalized = re.sub(r"\bml\b", "machine learning", question_normalized)
     # Collapse multiple spaces
-    question_normalized = re.sub(r'\s+', ' ', question_normalized).strip()
+    question_normalized = re.sub(r"\s+", " ", question_normalized).strip()
     q_lower = question_normalized
 
     # DEBUG: Log normalized question
     import logging
+
     logger = logging.getLogger("activekg.api.main")
     logger.info(f"detect_intent: original='{question}' normalized='{q_lower}'")
 
     # Intent: Open positions
     # Patterns: "open ML engineer positions", "positions are open", "what positions are available", "hiring for..."
     # Match if query contains position/role/job/engineer keywords AND open/available/hiring keywords (in any order)
-    has_position_keyword = bool(re.search(r'\b(position|role|job|engineer|developer|scientist)\b', q_lower))
-    has_open_keyword = bool(re.search(r'\b(open|available|hiring|recruiting|looking for)\b', q_lower))
+    has_position_keyword = bool(
+        re.search(r"\b(position|role|job|engineer|developer|scientist)\b", q_lower)
+    )
+    has_open_keyword = bool(
+        re.search(r"\b(open|available|hiring|recruiting|looking for)\b", q_lower)
+    )
     logger.info(f"detect_intent: has_position={has_position_keyword}, has_open={has_open_keyword}")
 
     if has_position_keyword and has_open_keyword:
         # Extract role terms
         role_terms = []
         role_keywords = {
-            'ml': ['ml', 'machine learning'],
-            'data': ['data scientist', 'data engineer', 'data analyst'],
-            'software': ['software engineer', 'developer', 'backend', 'frontend'],
-            'devops': ['devops', 'sre', 'site reliability'],
+            "ml": ["ml", "machine learning"],
+            "data": ["data scientist", "data engineer", "data analyst"],
+            "software": ["software engineer", "developer", "backend", "frontend"],
+            "devops": ["devops", "sre", "site reliability"],
         }
-        for key, terms in role_keywords.items():
+        for _key, terms in role_keywords.items():
             if any(term in q_lower for term in terms):
                 role_terms.extend(terms)
 
@@ -1410,7 +1459,9 @@ def detect_intent(question: str) -> tuple[Optional[str], Optional[dict]]:
     # Intent: Performance issues
     # Patterns: "performance issues", "slow queries", "latency problems", "reported issues", etc.
     # Simplified pattern to match word stems (issues, reported, problems, etc.)
-    perf_issue_pattern = r'(performance|slow|latency|timeout|bottleneck).*(issue|problem|bug|incident|report)'
+    perf_issue_pattern = (
+        r"(performance|slow|latency|timeout|bottleneck).*(issue|problem|bug|incident|report)"
+    )
     if re.search(perf_issue_pattern, q_lower):
         return ("performance_issues", {"lookback_days": 30})
 
@@ -1420,11 +1471,11 @@ def detect_intent(question: str) -> tuple[Optional[str], Optional[dict]]:
     # Entity: Job posting queries
     # Patterns: "What position...", "ML engineer job", "job about...", "position requires..."
     job_patterns = [
-        r'\b(position|job|role)\b.*\b(require|need|about|available|open|description)\b',
-        r'\b(machine learning|data scientist|sre|ux|developer)\b.*\b(position|job|role)\b',
-        r'what.*\b(position|job|role)\b',
-        r'\b(frameworks?|stack|libraries|requirements?|skills?)\b.*\b(position|job|role|engineer)\b',
-        r'\b(job|role|position)\b.*(about|description)',
+        r"\b(position|job|role)\b.*\b(require|need|about|available|open|description)\b",
+        r"\b(machine learning|data scientist|sre|ux|developer)\b.*\b(position|job|role)\b",
+        r"what.*\b(position|job|role)\b",
+        r"\b(frameworks?|stack|libraries|requirements?|skills?)\b.*\b(position|job|role|engineer)\b",
+        r"\b(job|role|position)\b.*(about|description)",
     ]
     job_match = any(re.search(pat, q_lower) for pat in job_patterns)
     logger.info(f"detect_intent: job_patterns_match={job_match}")
@@ -1432,79 +1483,87 @@ def detect_intent(question: str) -> tuple[Optional[str], Optional[dict]]:
         # Extract role-specific terms as must-haves
         must_have_terms = []
         role_indicators = {
-            'machine learning engineer': ['machine learning engineer', 'ml engineer'],
-            'data scientist': ['data scientist'],
-            'site reliability engineer': ['site reliability engineer', 'sre'],
-            'ux designer': ['ux designer', 'ux'],
-            'python developer': ['python developer', 'python'],
+            "machine learning engineer": ["machine learning engineer", "ml engineer"],
+            "data scientist": ["data scientist"],
+            "site reliability engineer": ["site reliability engineer", "sre"],
+            "ux designer": ["ux designer", "ux"],
+            "python developer": ["python developer", "python"],
         }
-        for role, terms in role_indicators.items():
+        for _role, terms in role_indicators.items():
             if any(term in q_lower for term in terms):
                 must_have_terms.extend(terms)
 
-        result = ("entity_job", {
-            "expected_classes": ["Job"],
-            "must_have_terms": must_have_terms if must_have_terms else None
-        })
+        result = (
+            "entity_job",
+            {
+                "expected_classes": ["Job"],
+                "must_have_terms": must_have_terms if must_have_terms else None,
+            },
+        )
         logger.info(f"detect_intent: returning intent={result[0]}, params={result[1]}")
         return result
 
     # Entity: Resume/experience queries
     # Patterns: "What experience does...", "Who has...", "data scientist experience", "resume about..."
     resume_patterns = [
-        r'\b(experience|resume|candidate|engineer|scientist)\b.*\b(has|have|with|know)\b',
-        r'who\s+(has|have)\b',
-        r'what\s+.*\b(experience|skills|knowledge)\b',
+        r"\b(experience|resume|candidate|engineer|scientist)\b.*\b(has|have|with|know)\b",
+        r"who\s+(has|have)\b",
+        r"what\s+.*\b(experience|skills|knowledge)\b",
     ]
     if any(re.search(pat, q_lower) for pat in resume_patterns):
         # Extract entity-specific terms
         must_have_terms = []
         entity_indicators = {
-            'data scientist': ['data scientist'],
-            'machine learning': ['machine learning', 'ml'],
-            'python': ['python'],
-            'site reliability': ['site reliability', 'sre'],
+            "data scientist": ["data scientist"],
+            "machine learning": ["machine learning", "ml"],
+            "python": ["python"],
+            "site reliability": ["site reliability", "sre"],
         }
-        for entity, terms in entity_indicators.items():
+        for _entity, terms in entity_indicators.items():
             if any(term in q_lower for term in terms):
                 must_have_terms.extend(terms)
 
-        return ("entity_resume", {
-            "expected_classes": ["Resume"],
-            "must_have_terms": must_have_terms if must_have_terms else None
-        })
+        return (
+            "entity_resume",
+            {
+                "expected_classes": ["Resume"],
+                "must_have_terms": must_have_terms if must_have_terms else None,
+            },
+        )
 
     # Entity: Article/knowledge queries
     # Patterns: "What are the...", "kubernetes article", "autoscaling tools", "article about..."
     article_patterns = [
-        r'\b(article|paper|guide|documentation|tutorial)\b',
-        r'what\s+are\s+the\s+\b(tools|patterns|approaches|best practices)\b',
-        r'\b(kubernetes|docker|monitoring|autoscaling)\b.*\b(tools|patterns|mentioned)\b',
+        r"\b(article|paper|guide|documentation|tutorial)\b",
+        r"what\s+are\s+the\s+\b(tools|patterns|approaches|best practices)\b",
+        r"\b(kubernetes|docker|monitoring|autoscaling)\b.*\b(tools|patterns|mentioned)\b",
     ]
     if any(re.search(pat, q_lower) for pat in article_patterns):
         # Extract topic-specific terms
         must_have_terms = []
         topic_indicators = {
-            'kubernetes': ['kubernetes', 'k8s'],
-            'autoscaling': ['autoscaling', 'autoscaler'],
-            'monitoring': ['monitoring', 'prometheus', 'grafana'],
+            "kubernetes": ["kubernetes", "k8s"],
+            "autoscaling": ["autoscaling", "autoscaler"],
+            "monitoring": ["monitoring", "prometheus", "grafana"],
         }
-        for topic, terms in topic_indicators.items():
+        for _topic, terms in topic_indicators.items():
             if any(term in q_lower for term in terms):
                 must_have_terms.extend(terms)
 
-        return ("entity_article", {
-            "expected_classes": ["Article"],
-            "must_have_terms": must_have_terms if must_have_terms else None
-        })
+        return (
+            "entity_article",
+            {
+                "expected_classes": ["Article"],
+                "must_have_terms": must_have_terms if must_have_terms else None,
+            },
+        )
 
     return (None, None)
 
 
 def filter_by_must_have_terms(
-    results: List[tuple[Node, float]],
-    must_have_terms: Optional[List[str]]
-) -> List[tuple[Node, float]]:
+    results: list[tuple[Node, float]], must_have_terms: list[str] | None
+) -> list[tuple[Node, float]]:
     """Filter results to only include nodes containing required terms.
 
     Args:
@@ -1528,7 +1587,9 @@ def filter_by_must_have_terms(
     return filtered if filtered else results
 
 
-def should_use_fast_path(question: str, top_similarity: float, result_count: int) -> tuple[bool, str]:
+def should_use_fast_path(
+    question: str, top_similarity: float, result_count: int
+) -> tuple[bool, str]:
     """Decide whether to use fast or fallback LLM based on query characteristics.
 
     Args:
@@ -1543,7 +1604,7 @@ def should_use_fast_path(question: str, top_similarity: float, result_count: int
         return (False, "hybrid_disabled")
 
     # Skip complex queries that need reasoning
-    complex_keywords = ['explain', 'why', 'how', 'compare', 'difference', 'analyze']
+    complex_keywords = ["explain", "why", "how", "compare", "difference", "analyze"]
     if any(kw in question.lower() for kw in complex_keywords):
         return (False, "complex_query")
 
@@ -1557,11 +1618,12 @@ def should_use_fast_path(question: str, top_similarity: float, result_count: int
 
     # Use fast path for listing queries with multiple good results
     listing_patterns = [
-        r'^(who|what|which|list|show|find)\s+(has|are|have|with|need)',
-        r'^list\s+',
-        r'^show\s+(me\s+)?(all|the)',
+        r"^(who|what|which|list|show|find)\s+(has|are|have|with|need)",
+        r"^list\s+",
+        r"^show\s+(me\s+)?(all|the)",
     ]
     import re
+
     if result_count >= 3 and any(re.match(pat, question.lower()) for pat in listing_patterns):
         return (True, "listing_query")
 
@@ -1574,7 +1636,7 @@ async def ask_question(
     request: AskRequest,
     http_request: Request,
     http_response: Response,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """LLM-powered Q&A with grounded citations from knowledge graph.
 
@@ -1603,14 +1665,12 @@ async def ask_question(
     if not LLM_ENABLED or llm is None:
         raise HTTPException(
             status_code=503,
-            detail="LLM provider not enabled. Set LLM_ENABLED=true and configure LLM_BACKEND/LLM_MODEL."
+            detail="LLM provider not enabled. Set LLM_ENABLED=true and configure LLM_BACKEND/LLM_MODEL.",
         )
 
     # Extract tenant context from JWT (secure) or request body (dev mode only)
     tenant_id, actor_id, actor_type = get_tenant_context(
-        http_request,
-        claims,
-        allow_override=not JWT_ENABLED
+        http_request, claims, allow_override=not JWT_ENABLED
     )
 
     # In dev mode, allow tenant_id override from request body
@@ -1623,7 +1683,7 @@ async def ask_question(
         http_response,
         endpoint="ask",
         tenant_id=tenant_id,
-        check_concurrency=True  # Max 3 concurrent /ask per tenant
+        check_concurrency=True,  # Max 3 concurrent /ask per tenant
     )
 
     try:
@@ -1647,6 +1707,7 @@ async def ask_question(
             # Normalize role_terms defensively to avoid ambiguous truth checks
             try:
                 import numpy as _np
+
                 if isinstance(role_terms, _np.ndarray):
                     role_terms = role_terms.tolist()
             except Exception:
@@ -1656,12 +1717,12 @@ async def ask_question(
             structured_results = repo.list_open_positions(
                 role_terms=role_terms,
                 limit=10,
-                tenant_id=tenant_id  # From JWT, not request body
+                tenant_id=tenant_id,  # From JWT, not request body
             )
-            logger.info("Intent detected: open_positions", extra_fields={
-                "role_terms": role_terms,
-                "results": len(structured_results)
-            })
+            logger.info(
+                "Intent detected: open_positions",
+                extra_fields={"role_terms": role_terms, "results": len(structured_results)},
+            )
 
         elif intent_type == "performance_issues":
             # Use structured query for performance issues
@@ -1669,12 +1730,12 @@ async def ask_question(
             structured_results = repo.list_performance_issues(
                 lookback_days=lookback_days,
                 limit=10,
-                tenant_id=tenant_id  # From JWT, not request body
+                tenant_id=tenant_id,  # From JWT, not request body
             )
-            logger.info("Intent detected: performance_issues", extra_fields={
-                "lookback_days": lookback_days,
-                "results": len(structured_results)
-            })
+            logger.info(
+                "Intent detected: performance_issues",
+                extra_fields={"lookback_days": lookback_days, "results": len(structured_results)},
+            )
 
         # 1. Hybrid search with BM25+vector fusion and reranking
         query_embedding = embedder.encode([request.question])[0]
@@ -1682,10 +1743,14 @@ async def ask_question(
         # Determine if we should use cross-encoder reranking
         # Skip reranking for: structured intents (bypass hybrid), small result sets, ultra-low latency mode
         intent_detected = bool(intent_type and intent_type != "search")
-        skip_rerank = intent_detected or not ASK_USE_RERANKER  # Skip for structured queries or if master toggle disabled
+        skip_rerank = (
+            intent_detected or not ASK_USE_RERANKER
+        )  # Skip for structured queries or if master toggle disabled
 
         # Use hybrid search for better retrieval (50 candidates → rerank to top 20)
-        logger.info(f"Calling hybrid_search with classes_filter={classes_filter}, tenant_id={tenant_id}")
+        logger.info(
+            f"Calling hybrid_search with classes_filter={classes_filter}, tenant_id={tenant_id}"
+        )
         try:
             hybrid_results = repo.hybrid_search(
                 query_text=request.question,
@@ -1694,7 +1759,7 @@ async def ask_question(
                 classes_filter=classes_filter,  # TRACK 1: Filter by node class
                 tenant_id=tenant_id,  # From JWT, not request body
                 use_reranker=not skip_rerank,  # Skip rerank for structured queries; gate on hybrid_score
-                rerank_skip_threshold=RERANK_SKIP_TOPSIM  # Use env-configurable threshold
+                rerank_skip_threshold=RERANK_SKIP_TOPSIM,  # Use env-configurable threshold
             )
             # Fallback: if hybrid returns 0, try vector-only to avoid empty context
             if not hybrid_results:
@@ -1703,7 +1768,7 @@ async def ask_question(
                     top_k=request.max_results or 5,
                     classes_filter=classes_filter,  # TRACK 1: Filter by node class
                     tenant_id=tenant_id,
-                    use_weighted_score=request.use_weighted_score
+                    use_weighted_score=request.use_weighted_score,
                 )
         except Exception:
             # Fallback if hybrid is unavailable (e.g., missing text_search_vector)
@@ -1712,7 +1777,7 @@ async def ask_question(
                 top_k=request.max_results or 5,
                 classes_filter=classes_filter,  # TRACK 1: Filter by node class
                 tenant_id=tenant_id,  # From JWT, not request body
-                use_weighted_score=request.use_weighted_score
+                use_weighted_score=request.use_weighted_score,
             )
 
         # Merge structured and hybrid results (structured results take priority)
@@ -1781,7 +1846,7 @@ async def ask_question(
                 "answer": "I couldn't find relevant information in the knowledge graph to answer your question.",
                 "citations": [],
                 "confidence": 0.0,
-                "metadata": {"searched_nodes": 0, "cited_nodes": 0, "filtered_nodes": 0}
+                "metadata": {"searched_nodes": 0, "cited_nodes": 0, "filtered_nodes": 0},
             }
             # Track metrics
             if METRICS_ENABLED:
@@ -1795,7 +1860,7 @@ async def ask_question(
                     latency_ms=latency_ms,
                     rejected=True,
                     rejection_reason="no_results",
-                    reranked=False
+                    reranked=False,
                 )
             return response_data
 
@@ -1822,8 +1887,8 @@ async def ask_question(
                     "top_similarity": round(top_similarity, 3),
                     "gating_score": round(top_similarity, 3),
                     "gating_score_type": gating_score_type,
-                    "reason": "extremely_low_similarity"
-                }
+                    "reason": "extremely_low_similarity",
+                },
             }
             # Track metrics
             if METRICS_ENABLED:
@@ -1835,7 +1900,7 @@ async def ask_question(
                     latency_ms=latency_ms,
                     rejected=True,
                     rejection_reason="extremely_low_similarity",
-                    reranked=not skip_rerank
+                    reranked=not skip_rerank,
                 )
             return response_data
 
@@ -1862,8 +1927,8 @@ async def ask_question(
                         "kth_similarity": round(kth_similarity, 3),
                         "gating_score": round(top_similarity, 3),
                         "gating_score_type": gating_score_type,
-                        "ambiguity_reason": "top-k gap too small"
-                    }
+                        "ambiguity_reason": "top-k gap too small",
+                    },
                 }
                 # Track metrics
                 if METRICS_ENABLED:
@@ -1875,7 +1940,7 @@ async def ask_question(
                         latency_ms=latency_ms,
                         rejected=True,
                         rejection_reason="ambiguity",
-                        reranked=not skip_rerank
+                        reranked=not skip_rerank,
                     )
                 return response_data
 
@@ -1884,7 +1949,7 @@ async def ask_question(
             results,
             similarity_threshold=ASK_SIM_THRESHOLD,
             min_results=2,
-            max_results=min(request.max_results or ASK_MAX_SNIPPETS, ASK_MAX_SNIPPETS)
+            max_results=min(request.max_results or ASK_MAX_SNIPPETS, ASK_MAX_SNIPPETS),
         )
 
         # 3. Build context from filtered nodes
@@ -1893,11 +1958,11 @@ async def ask_question(
             # Calculate age in days
             age_days = None
             if node.last_refreshed:
-                age_seconds = (datetime.now(timezone.utc) - node.last_refreshed).total_seconds()
+                age_seconds = (datetime.now(UTC) - node.last_refreshed).total_seconds()
                 age_days = age_seconds / 86400.0
 
             # Format context with metadata
-            text = node.props.get('text', '')[:ASK_SNIPPET_LEN]
+            text = node.props.get("text", "")[:ASK_SNIPPET_LEN]
             age_str = f"{age_days:.1f}d" if age_days else "unknown"
             context_items.append(
                 f"[{i}] {text}\n"
@@ -1906,9 +1971,7 @@ async def ask_question(
 
         # 4. Hybrid routing: select fast or fallback LLM
         use_fast, routing_reason = should_use_fast_path(
-            request.question,
-            top_similarity,
-            len(filtered_results)
+            request.question, top_similarity, len(filtered_results)
         )
 
         # Select LLM provider and token budget
@@ -1922,12 +1985,15 @@ async def ask_question(
             llm_path = "fallback"
 
         # Log routing decision
-        logger.info("LLM routing decision", extra_fields={
-            "question": request.question[:50],
-            "path": llm_path,
-            "reason": routing_reason,
-            "top_similarity": round(top_similarity, 3)
-        })
+        logger.info(
+            "LLM routing decision",
+            extra_fields={
+                "question": request.question[:50],
+                "path": llm_path,
+                "reason": routing_reason,
+                "top_similarity": round(top_similarity, 3),
+            },
+        )
 
         # 5. LLM call with optimized prompt and parameters (with simple context-aware cache)
         system_message, prompt = build_strict_citation_prompt(context_items, request.question)
@@ -1942,12 +2008,14 @@ async def ask_question(
             prompt,
             system_message=system_message,
             max_tokens=max_tokens,
-            temperature=0.1   # Keep deterministic for consistency
+            temperature=0.1,  # Keep deterministic for consistency
         )
 
         # 5. Extract citations and add lineage (use filtered_results for indexing)
         citation_indices = extract_citation_numbers(answer)
-        cited_nodes = [filtered_results[i][0] for i in citation_indices if i < len(filtered_results)]
+        cited_nodes = [
+            filtered_results[i][0] for i in citation_indices if i < len(filtered_results)
+        ]
 
         citations = []
         for node in cited_nodes:
@@ -1957,16 +2025,18 @@ async def ask_question(
             # Calculate age
             age_days = None
             if node.last_refreshed:
-                age_seconds = (datetime.now(timezone.utc) - node.last_refreshed).total_seconds()
+                age_seconds = (datetime.now(UTC) - node.last_refreshed).total_seconds()
                 age_days = round(age_seconds / 86400.0, 2)
 
-            citations.append({
-                "node_id": node.id,
-                "classes": node.classes,
-                "drift_score": node.drift_score,
-                "age_days": age_days,
-                "lineage": [{"ancestor": anc["id"], "depth": anc["depth"]} for anc in lineage]
-            })
+            citations.append(
+                {
+                    "node_id": node.id,
+                    "classes": node.classes,
+                    "drift_score": node.drift_score,
+                    "age_days": age_days,
+                    "lineage": [{"ancestor": anc["id"], "depth": anc["depth"]} for anc in lineage],
+                }
+            )
 
         # 6. Calculate confidence (use filtered results for confidence calculation)
         confidence = calculate_confidence(answer, filtered_results, citation_indices, intent_type)
@@ -1977,7 +2047,9 @@ async def ask_question(
 
         # 7. Per-question metrics for evaluation and debugging
         first_citation_idx = citation_indices[0] if citation_indices else None
-        first_citation_precision = 1.0 if first_citation_idx == 0 else 0.0 if first_citation_idx is not None else None
+        first_citation_precision = (
+            1.0 if first_citation_idx == 0 else 0.0 if first_citation_idx is not None else None
+        )
 
         # 7.5 Include term gating diagnostics when available
         gating_info = {}
@@ -2008,11 +2080,15 @@ async def ask_question(
                 "routing_reason": routing_reason,
                 "intent_detected": intent_type,
                 "intent_type": intent_type,  # TRACK 1: Include intent type
-                "classes_filter": classes_filter if classes_filter else None,  # TRACK 1: Show class filtering
-                "must_have_terms": must_have_terms if must_have_terms else None,  # TRACK 1: Show term gating
+                "classes_filter": classes_filter
+                if classes_filter
+                else None,  # TRACK 1: Show class filtering
+                "must_have_terms": must_have_terms
+                if must_have_terms
+                else None,  # TRACK 1: Show term gating
                 "structured_results_count": len(structured_results) if structured_results else 0,
-                **gating_info
-            }
+                **gating_info,
+            },
         }
 
         _ask_cache_put(cache_key, response)
@@ -2027,7 +2103,7 @@ async def ask_question(
                 latency_ms=latency_ms,
                 rejected=False,
                 rejection_reason=None,
-                reranked=not skip_rerank
+                reranked=not skip_rerank,
             )
 
         return response
@@ -2035,12 +2111,13 @@ async def ask_question(
     except Exception as e:
         # Handle any unexpected errors during /ask processing
         import traceback
+
         tb = traceback.format_exc()
-        logger.error("Error in /ask endpoint", extra_fields={"error": str(e), "traceback": tb, "actor_id": actor_id})
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error processing question: {str(e)}"
+        logger.error(
+            "Error in /ask endpoint",
+            extra_fields={"error": str(e), "traceback": tb, "actor_id": actor_id},
         )
+        raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
     finally:
         # ALWAYS mark request as complete for concurrency tracking
         # This runs even if exception occurs or response returned early
@@ -2054,7 +2131,7 @@ async def ask_stream(
     request: AskRequest,
     http_request: Request,
     http_response: Response,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Server-Sent Events streaming for LLM Q&A with citations.
 
@@ -2064,14 +2141,12 @@ async def ask_stream(
     if not LLM_ENABLED or llm is None:
         raise HTTPException(
             status_code=503,
-            detail="LLM provider not enabled. Set LLM_ENABLED=true and configure LLM_BACKEND/LLM_MODEL."
+            detail="LLM provider not enabled. Set LLM_ENABLED=true and configure LLM_BACKEND/LLM_MODEL.",
         )
 
     # Extract tenant context from JWT (secure) or request body (dev mode only)
     tenant_id, actor_id, actor_type = get_tenant_context(
-        http_request,
-        claims,
-        allow_override=not JWT_ENABLED
+        http_request, claims, allow_override=not JWT_ENABLED
     )
 
     # In dev mode, allow tenant_id override from request body
@@ -2084,13 +2159,13 @@ async def ask_stream(
         http_response,
         endpoint="ask_stream",
         tenant_id=tenant_id,
-        check_concurrency=True  # Max 2 concurrent /ask/stream per tenant
+        check_concurrency=True,  # Max 2 concurrent /ask/stream per tenant
     )
 
-    def sse(data: str, event: Optional[str] = None) -> bytes:
+    def sse(data: str, event: str | None = None) -> bytes:
         if event:
-            return f"event: {event}\ndata: {data}\n\n".encode("utf-8")
-        return f"data: {data}\n\n".encode("utf-8")
+            return f"event: {event}\ndata: {data}\n\n".encode()
+        return f"data: {data}\n\n".encode()
 
     def gen():
         try:
@@ -2113,12 +2188,18 @@ async def ask_stream(
                 )
 
             if not results:
-                yield sse('{"type":"final","answer":"I couldn\'t find relevant information.","citations":[],"confidence":0.0}', "final")
+                yield sse(
+                    '{"type":"final","answer":"I couldn\'t find relevant information.","citations":[],"confidence":0.0}',
+                    "final",
+                )
                 return
 
             top_similarity = results[0][1]
             if top_similarity < ASK_SIM_THRESHOLD:
-                yield sse('{"type":"final","answer":"I don\'t have enough information to answer this question confidently.","citations":[],"confidence":0.2}', "final")
+                yield sse(
+                    '{"type":"final","answer":"I don\'t have enough information to answer this question confidently.","citations":[],"confidence":0.2}',
+                    "final",
+                )
                 return
 
             # Filter context to top-3
@@ -2134,11 +2215,15 @@ async def ask_stream(
             for i, (node, similarity) in enumerate(filtered_results):
                 age_days = None
                 if node.last_refreshed:
-                    age_seconds = (datetime.now(timezone.utc) - node.last_refreshed).total_seconds()
+                    age_seconds = (datetime.now(UTC) - node.last_refreshed).total_seconds()
                     age_days = age_seconds / 86400.0
-                text = node.props.get('text', '')[:ASK_SNIPPET_LEN]  # snippet length is configurable
+                text = node.props.get("text", "")[
+                    :ASK_SNIPPET_LEN
+                ]  # snippet length is configurable
                 age_str = f"{age_days:.1f}d" if age_days else "unknown"
-                context_items.append(f"[{i}] {text}\n   (similarity={similarity:.3f}, drift={node.drift_score or 0:.3f}, age={age_str})")
+                context_items.append(
+                    f"[{i}] {text}\n   (similarity={similarity:.3f}, drift={node.drift_score or 0:.3f}, age={age_str})"
+                )
 
             system_message, prompt = build_strict_citation_prompt(context_items, request.question)
 
@@ -2146,12 +2231,14 @@ async def ask_stream(
             try:
                 ctx_ids = [n.id for n, _ in filtered_results]
                 yield sse(
-                    data=json.dumps({
-                        "type": "context",
-                        "node_ids": ctx_ids,
-                        "top_similarity": round(top_similarity, 3),
-                        "count": len(filtered_results),
-                    }),
+                    data=json.dumps(
+                        {
+                            "type": "context",
+                            "node_ids": ctx_ids,
+                            "top_similarity": round(top_similarity, 3),
+                            "count": len(filtered_results),
+                        }
+                    ),
                     event="context",
                 )
             except Exception:
@@ -2172,22 +2259,28 @@ async def ask_stream(
             # 3) Finalize with citations + confidence
             answer = "".join(answer_buf)
             citation_indices = extract_citation_numbers(answer)
-            cited_nodes = [filtered_results[i][0] for i in citation_indices if i < len(filtered_results)]
+            cited_nodes = [
+                filtered_results[i][0] for i in citation_indices if i < len(filtered_results)
+            ]
 
             citations = []
             for node in cited_nodes:
                 lineage = repo.get_lineage(node.id, max_depth=3)
                 age_days = None
                 if node.last_refreshed:
-                    age_seconds = (datetime.now(timezone.utc) - node.last_refreshed).total_seconds()
+                    age_seconds = (datetime.now(UTC) - node.last_refreshed).total_seconds()
                     age_days = round(age_seconds / 86400.0, 2)
-                citations.append({
-                    "node_id": node.id,
-                    "classes": node.classes,
-                    "drift_score": node.drift_score,
-                    "age_days": age_days,
-                    "lineage": [{"ancestor": anc["id"], "depth": anc["depth"]} for anc in lineage],
-                })
+                citations.append(
+                    {
+                        "node_id": node.id,
+                        "classes": node.classes,
+                        "drift_score": node.drift_score,
+                        "age_days": age_days,
+                        "lineage": [
+                            {"ancestor": anc["id"], "depth": anc["depth"]} for anc in lineage
+                        ],
+                    }
+                )
 
             confidence = calculate_confidence(answer, filtered_results, citation_indices)
 
@@ -2232,7 +2325,7 @@ def create_edge(
     _rl: None = Depends(require_rate_limit("default")),
     http_request: Request = None,
     http_response: Response = None,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Create a relationship between two nodes with validated input.
 
@@ -2263,11 +2356,11 @@ def create_edge(
 
 @app.post("/triggers")
 def register_trigger_pattern(
-    pattern: Dict[str, Any],
+    pattern: dict[str, Any],
     _rl: None = Depends(require_rate_limit("default")),
     http_request: Request = None,
     http_response: Response = None,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Register a semantic trigger pattern.
 
@@ -2309,7 +2402,7 @@ def list_trigger_patterns(
     http_request: Request = None,
     http_response: Response = None,
     _rl: None = Depends(require_rate_limit("default")),
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """List all registered trigger patterns.
 
@@ -2331,7 +2424,7 @@ def delete_trigger_pattern(
     _rl: None = Depends(require_rate_limit("default")),
     http_request: Request = None,
     http_response: Response = None,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Delete a trigger pattern by name.
 
@@ -2355,14 +2448,14 @@ def delete_trigger_pattern(
 
 @app.get("/events")
 def list_events(
-    node_id: Optional[str] = None,
-    event_type: Optional[str] = None,
-    tenant_id: Optional[str] = None,
+    node_id: str | None = None,
+    event_type: str | None = None,
+    tenant_id: str | None = None,
     limit: int = 100,
     http_request: Request = None,
     http_response: Response = None,
     _rl: None = Depends(require_rate_limit("default")),
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """List events with optional filtering by node_id, event_type, and tenant.
 
@@ -2398,13 +2491,15 @@ def list_events(
 
                 events = []
                 for row in cur.fetchall():
-                    events.append({
-                        "id": str(row[0]),
-                        "node_id": str(row[1]) if row[1] else None,
-                        "type": row[2],
-                        "payload": row[3],
-                        "created_at": row[4].isoformat() if row[4] else None,
-                    })
+                    events.append(
+                        {
+                            "id": str(row[0]),
+                            "node_id": str(row[1]) if row[1] else None,
+                            "type": row[2],
+                            "payload": row[3],
+                            "created_at": row[4].isoformat() if row[4] else None,
+                        }
+                    )
 
                 return {"events": events, "count": len(events)}
     except Exception as e:
@@ -2416,11 +2511,11 @@ def list_events(
 def get_lineage(
     node_id: str,
     max_depth: int = 5,
-    tenant_id: Optional[str] = None,
+    tenant_id: str | None = None,
     http_request: Request = None,
     http_response: Response = None,
     _rl: None = Depends(require_rate_limit("default")),
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Traverse DERIVED_FROM edges to retrieve provenance lineage.
 
@@ -2450,10 +2545,12 @@ def get_lineage(
 
 @app.post("/admin/refresh")
 async def admin_refresh(
-    payload: Optional[Any] = Body(default=None, description='Either ["id", ...] or {"node_ids": ["id", ...]}'),
+    payload: Any | None = Body(
+        default=None, description='Either ["id", ...] or {"node_ids": ["id", ...]}'
+    ),
     http_request: Request = None,
     http_response: Response = None,
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Trigger on-demand refresh cycle.
 
@@ -2468,12 +2565,13 @@ async def admin_refresh(
     # Require admin:refresh scope when JWT is enabled
     if JWT_ENABLED and claims and "admin:refresh" not in claims.scopes:
         raise HTTPException(
-            status_code=403,
-            detail="Insufficient permissions. Required scope: admin:refresh"
+            status_code=403, detail="Insufficient permissions. Required scope: admin:refresh"
         )
 
     # Extract tenant context
-    tenant_id, actor_id, actor_type = get_tenant_context(http_request, claims, allow_override=not JWT_ENABLED)
+    tenant_id, actor_id, actor_type = get_tenant_context(
+        http_request, claims, allow_override=not JWT_ENABLED
+    )
 
     # Apply rate limiting (lighter limits for admin endpoints)
     if http_request and http_response:
@@ -2482,11 +2580,11 @@ async def admin_refresh(
             http_response,
             endpoint="admin_refresh",
             tenant_id=tenant_id,
-            check_concurrency=False  # No concurrency cap for admin
+            check_concurrency=False,  # No concurrency cap for admin
         )
 
     # Accept both raw array and wrapped object inputs
-    node_ids: Optional[List[str]] = None
+    node_ids: list[str] | None = None
     try:
         if isinstance(payload, list):
             node_ids = payload
@@ -2497,7 +2595,6 @@ async def admin_refresh(
 
     try:
         from activekg.refresh.scheduler import RefreshScheduler
-        from activekg.triggers.trigger_engine import TriggerEngine
 
         # Create scheduler instance
         scheduler = RefreshScheduler(repo, embedder, trigger_engine=None)
@@ -2518,36 +2615,48 @@ async def admin_refresh(
 
                     # Calculate drift
                     if old is not None:
-                        drift = 1.0 - float((old @ new) / ((old**2).sum()**0.5 * (new**2).sum()**0.5))
+                        drift = 1.0 - float(
+                            (old @ new) / ((old**2).sum() ** 0.5 * (new**2).sum() ** 0.5)
+                        )
                     else:
                         drift = 0.0
 
                     # Update
-                    timestamp = datetime.now(timezone.utc).isoformat()
-                    repo.update_node_embedding(node.id, new, drift, timestamp, tenant_id=node.tenant_id)
-                    repo.write_embedding_history(node.id, drift, embedding_ref=node.payload_ref, tenant_id=node.tenant_id)
+                    timestamp = datetime.now(UTC).isoformat()
+                    repo.update_node_embedding(
+                        node.id, new, drift, timestamp, tenant_id=node.tenant_id
+                    )
+                    repo.write_embedding_history(
+                        node.id, drift, embedding_ref=node.payload_ref, tenant_id=node.tenant_id
+                    )
 
                     # Emit event if drift > threshold
-                    drift_threshold = node.refresh_policy.get('drift_threshold', 0.1)
+                    drift_threshold = node.refresh_policy.get("drift_threshold", 0.1)
                     if drift > drift_threshold:
                         repo.append_event(
                             node.id,
-                            'refreshed',
-                            {'drift_score': drift, 'last_refreshed': timestamp, 'manual_trigger': True},
+                            "refreshed",
+                            {
+                                "drift_score": drift,
+                                "last_refreshed": timestamp,
+                                "manual_trigger": True,
+                            },
                             tenant_id=node.tenant_id,
                             actor_id=actor_id,  # From JWT, not hardcoded
-                            actor_type=actor_type  # From JWT
+                            actor_type=actor_type,  # From JWT
                         )
 
                     refreshed_count += 1
                 except Exception as e:
-                    logger.error("Node refresh failed", extra_fields={"node_id": node_id, "error": str(e)})
+                    logger.error(
+                        "Node refresh failed", extra_fields={"node_id": node_id, "error": str(e)}
+                    )
 
             return {
                 "status": "completed",
                 "mode": "specific_nodes",
                 "requested": len(node_ids),
-                "refreshed": refreshed_count
+                "refreshed": refreshed_count,
             }
         else:
             # Run full refresh cycle
@@ -2555,7 +2664,7 @@ async def admin_refresh(
             return {
                 "status": "completed",
                 "mode": "all_due_nodes",
-                "message": "Check logs for refresh count"
+                "message": "Check logs for refresh count",
             }
 
     except Exception as e:
@@ -2565,16 +2674,16 @@ async def admin_refresh(
 
 @app.get("/admin/anomalies")
 def get_anomalies(
-    types: Optional[str] = None,
+    types: str | None = None,
     lookback_hours: int = 24,
     drift_spike_threshold: float = 2.0,
     trigger_storm_threshold: int = 50,
     scheduler_lag_multiplier: float = 2.0,
-    tenant_id: Optional[str] = None,
+    tenant_id: str | None = None,
     http_request: Request = None,
     http_response: Response = None,
     _rl: None = Depends(require_rate_limit("default")),
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Detect operational anomalies in the knowledge graph.
 
@@ -2596,36 +2705,37 @@ def get_anomalies(
     """
     try:
         # Parse requested types (default: all)
-        requested_types = set(types.split(',')) if types else {'drift_spike', 'trigger_storm', 'scheduler_lag'}
+        requested_types = (
+            set(types.split(",")) if types else {"drift_spike", "trigger_storm", "scheduler_lag"}
+        )
 
         results = {}
 
         # Detect drift spikes
-        if 'drift_spike' in requested_types:
+        if "drift_spike" in requested_types:
             drift_spikes = repo.detect_drift_spikes(
                 lookback_hours=lookback_hours,
                 spike_threshold=drift_spike_threshold,
                 min_refreshes=3,
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
             )
-            results['drift_spike'] = drift_spikes
+            results["drift_spike"] = drift_spikes
 
         # Detect trigger storms
-        if 'trigger_storm' in requested_types:
+        if "trigger_storm" in requested_types:
             trigger_storms = repo.detect_trigger_storms(
                 lookback_hours=lookback_hours,
                 event_threshold=trigger_storm_threshold,
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
             )
-            results['trigger_storm'] = trigger_storms
+            results["trigger_storm"] = trigger_storms
 
         # Detect scheduler lag
-        if 'scheduler_lag' in requested_types:
+        if "scheduler_lag" in requested_types:
             scheduler_lag = repo.detect_scheduler_lag(
-                lag_multiplier=scheduler_lag_multiplier,
-                tenant_id=tenant_id
+                lag_multiplier=scheduler_lag_multiplier, tenant_id=tenant_id
             )
-            results['scheduler_lag'] = scheduler_lag
+            results["scheduler_lag"] = scheduler_lag
 
         # Summary stats
         total_anomalies = sum(len(v) for v in results.values())
@@ -2635,8 +2745,8 @@ def get_anomalies(
             "summary": {
                 "total": total_anomalies,
                 "by_type": {k: len(v) for k, v in results.items()},
-                "lookback_hours": lookback_hours
-            }
+                "lookback_hours": lookback_hours,
+            },
         }
 
     except Exception as e:
@@ -2651,7 +2761,7 @@ def get_node_versions(
     http_request: Request = None,
     http_response: Response = None,
     _rl: None = Depends(require_rate_limit("default")),
-    claims: Optional[JWTClaims] = Depends(get_jwt_claims)
+    claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Get embedding version history for a node.
 
@@ -2681,12 +2791,10 @@ def get_node_versions(
 
         versions = repo.get_node_versions(node_id, limit=limit, tenant_id=tenant_id)
 
-        return {
-            "node_id": node_id,
-            "versions": versions,
-            "count": len(versions)
-        }
+        return {"node_id": node_id, "versions": versions, "count": len(versions)}
 
     except Exception as e:
-        logger.error("Node versions query failed", extra_fields={"node_id": node_id, "error": str(e)})
+        logger.error(
+            "Node versions query failed", extra_fields={"node_id": node_id, "error": str(e)}
+        )
         raise HTTPException(status_code=500, detail=f"Node versions query failed: {str(e)}")

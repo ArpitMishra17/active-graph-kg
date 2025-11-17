@@ -20,16 +20,13 @@ import json
 import sys
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
-import requests
+from typing import Any
+
 import numpy as np
+import requests
 
 
-def get_high_drift_nodes(
-    api_url: str,
-    drift_threshold: float = 0.2,
-    limit: int = 100
-) -> List[str]:
+def get_high_drift_nodes(api_url: str, drift_threshold: float = 0.2, limit: int = 100) -> list[str]:
     """Find nodes with drift > threshold.
 
     Args:
@@ -46,8 +43,8 @@ def get_high_drift_nodes(
         params={
             "types": "drift_spike",
             "drift_spike_threshold": drift_threshold / 0.1,  # Convert to multiplier
-            "lookback_hours": 168  # 1 week
-        }
+            "lookback_hours": 168,  # 1 week
+        },
     )
     resp.raise_for_status()
     data = resp.json()
@@ -61,11 +58,11 @@ def get_high_drift_nodes(
 
 def run_test_queries(
     api_url: str,
-    queries: List[str],
-    ground_truth: Dict[str, List[str]],
+    queries: list[str],
+    ground_truth: dict[str, list[str]],
     top_k: int = 10,
-    use_weighted: bool = False
-) -> Dict[str, Any]:
+    use_weighted: bool = False,
+) -> dict[str, Any]:
     """Run queries and measure retrieval quality.
 
     Args:
@@ -85,11 +82,7 @@ def run_test_queries(
         # Run search
         resp = requests.post(
             f"{api_url}/search",
-            json={
-                "query": query,
-                "top_k": top_k,
-                "use_weighted_score": use_weighted
-            }
+            json={"query": query, "top_k": top_k, "use_weighted_score": use_weighted},
         )
         resp.raise_for_status()
         results = resp.json()
@@ -119,11 +112,11 @@ def run_test_queries(
         "recall@10_std": np.std(recall_scores) if recall_scores else 0.0,
         "mrr": np.mean(reciprocal_ranks) if reciprocal_ranks else 0.0,
         "mrr_std": np.std(reciprocal_ranks) if reciprocal_ranks else 0.0,
-        "num_queries": len(recall_scores)
+        "num_queries": len(recall_scores),
     }
 
 
-def refresh_nodes(api_url: str, node_ids: List[str]) -> Dict[str, Any]:
+def refresh_nodes(api_url: str, node_ids: list[str]) -> dict[str, Any]:
     """Force refresh a list of nodes.
 
     Args:
@@ -133,21 +126,18 @@ def refresh_nodes(api_url: str, node_ids: List[str]) -> Dict[str, Any]:
     Returns:
         Refresh status
     """
-    resp = requests.post(
-        f"{api_url}/admin/refresh",
-        json=node_ids
-    )
+    resp = requests.post(f"{api_url}/admin/refresh", json=node_ids)
     resp.raise_for_status()
     return resp.json()
 
 
 def measure_drift_cohort_impact(
     api_url: str,
-    test_queries: List[str],
-    ground_truth: Dict[str, List[str]],
+    test_queries: list[str],
+    ground_truth: dict[str, list[str]],
     drift_threshold: float = 0.2,
-    wait_after_refresh: int = 5
-) -> Dict[str, Any]:
+    wait_after_refresh: int = 5,
+) -> dict[str, Any]:
     """Measure impact of refreshing high-drift nodes on retrieval quality.
 
     Args:
@@ -218,28 +208,42 @@ def measure_drift_cohort_impact(
     print("=" * 70)
     print("RESULTS SUMMARY")
     print("=" * 70)
-    print(f"Baseline Recall@10:      {baseline_metrics['recall@10']:.3f} ± {baseline_metrics['recall@10_std']:.3f}")
-    print(f"Post-refresh Recall@10:  {post_refresh_metrics['recall@10']:.3f} ± {post_refresh_metrics['recall@10_std']:.3f}")
-    print(f"Δ Recall@10:             {delta_recall:+.3f} ({delta_recall/baseline_metrics['recall@10']*100:+.1f}%)")
+    print(
+        f"Baseline Recall@10:      {baseline_metrics['recall@10']:.3f} ± {baseline_metrics['recall@10_std']:.3f}"
+    )
+    print(
+        f"Post-refresh Recall@10:  {post_refresh_metrics['recall@10']:.3f} ± {post_refresh_metrics['recall@10_std']:.3f}"
+    )
+    print(
+        f"Δ Recall@10:             {delta_recall:+.3f} ({delta_recall / baseline_metrics['recall@10'] * 100:+.1f}%)"
+    )
     print()
-    print(f"Baseline MRR:            {baseline_metrics['mrr']:.3f} ± {baseline_metrics['mrr_std']:.3f}")
-    print(f"Post-refresh MRR:        {post_refresh_metrics['mrr']:.3f} ± {post_refresh_metrics['mrr_std']:.3f}")
-    print(f"Δ MRR:                   {delta_mrr:+.3f} ({delta_mrr/baseline_metrics['mrr']*100:+.1f}%)")
+    print(
+        f"Baseline MRR:            {baseline_metrics['mrr']:.3f} ± {baseline_metrics['mrr_std']:.3f}"
+    )
+    print(
+        f"Post-refresh MRR:        {post_refresh_metrics['mrr']:.3f} ± {post_refresh_metrics['mrr_std']:.3f}"
+    )
+    print(
+        f"Δ MRR:                   {delta_mrr:+.3f} ({delta_mrr / baseline_metrics['mrr'] * 100:+.1f}%)"
+    )
     print()
 
     # Check against expected results (Chen 2021)
     expected_recall_improvement = 0.10  # +10%
-    expected_mrr_improvement = 0.08     # +8%
+    expected_mrr_improvement = 0.08  # +8%
 
-    recall_percent = delta_recall / baseline_metrics["recall@10"] if baseline_metrics["recall@10"] > 0 else 0
+    recall_percent = (
+        delta_recall / baseline_metrics["recall@10"] if baseline_metrics["recall@10"] > 0 else 0
+    )
     mrr_percent = delta_mrr / baseline_metrics["mrr"] if baseline_metrics["mrr"] > 0 else 0
 
     recall_status = "✅" if recall_percent >= expected_recall_improvement else "⚠"
     mrr_status = "✅" if mrr_percent >= expected_mrr_improvement else "⚠"
 
     print("Expected vs Actual (Chen 2021):")
-    print(f"{recall_status} Recall@10 improvement: {recall_percent*100:+.1f}% (target: +10%)")
-    print(f"{mrr_status} MRR improvement:       {mrr_percent*100:+.1f}% (target: +8%)")
+    print(f"{recall_status} Recall@10 improvement: {recall_percent * 100:+.1f}% (target: +10%)")
+    print(f"{mrr_status} MRR improvement:       {mrr_percent * 100:+.1f}% (target: +8%)")
     print("=" * 70)
 
     return {
@@ -249,23 +253,25 @@ def measure_drift_cohort_impact(
             "recall@10": delta_recall,
             "recall@10_percent": recall_percent * 100,
             "mrr": delta_mrr,
-            "mrr_percent": mrr_percent * 100
+            "mrr_percent": mrr_percent * 100,
         },
         "high_drift_nodes": len(high_drift_nodes),
         "drift_threshold": drift_threshold,
         "meets_expectations": {
             "recall": recall_percent >= expected_recall_improvement,
-            "mrr": mrr_percent >= expected_mrr_improvement
+            "mrr": mrr_percent >= expected_mrr_improvement,
         },
         "timing": {
             "baseline_queries": baseline_time,
             "refresh": refresh_time,
-            "post_refresh_queries": post_refresh_time
-        }
+            "post_refresh_queries": post_refresh_time,
+        },
     }
 
 
-def load_test_data(queries_file: str, ground_truth_file: str) -> Tuple[List[str], Dict[str, List[str]]]:
+def load_test_data(
+    queries_file: str, ground_truth_file: str
+) -> tuple[list[str], dict[str, list[str]]]:
     """Load test queries and ground truth from JSON files.
 
     Args:
@@ -275,10 +281,10 @@ def load_test_data(queries_file: str, ground_truth_file: str) -> Tuple[List[str]
     Returns:
         Tuple of (queries, ground_truth_dict)
     """
-    with open(queries_file, 'r') as f:
+    with open(queries_file) as f:
         queries = json.load(f)
 
-    with open(ground_truth_file, 'r') as f:
+    with open(ground_truth_file) as f:
         ground_truth = json.load(f)
 
     return queries, ground_truth
@@ -287,10 +293,20 @@ def load_test_data(queries_file: str, ground_truth_file: str) -> Tuple[List[str]
 def main():
     parser = argparse.ArgumentParser(description="Drift Cohort Analysis")
     parser.add_argument("--api-url", default="http://localhost:8000", help="API base URL")
-    parser.add_argument("--queries", default="evaluation/datasets/test_queries.json", help="Test queries JSON file")
-    parser.add_argument("--ground-truth", default="evaluation/datasets/ground_truth.json", help="Ground truth JSON file")
-    parser.add_argument("--drift-threshold", type=float, default=0.2, help="Drift threshold for cohort")
-    parser.add_argument("--output", default="evaluation/drift_cohort_results.json", help="Output JSON file")
+    parser.add_argument(
+        "--queries", default="evaluation/datasets/test_queries.json", help="Test queries JSON file"
+    )
+    parser.add_argument(
+        "--ground-truth",
+        default="evaluation/datasets/ground_truth.json",
+        help="Ground truth JSON file",
+    )
+    parser.add_argument(
+        "--drift-threshold", type=float, default=0.2, help="Drift threshold for cohort"
+    )
+    parser.add_argument(
+        "--output", default="evaluation/drift_cohort_results.json", help="Output JSON file"
+    )
     args = parser.parse_args()
 
     try:
@@ -299,10 +315,7 @@ def main():
 
         # Run analysis
         results = measure_drift_cohort_impact(
-            args.api_url,
-            queries,
-            ground_truth,
-            drift_threshold=args.drift_threshold
+            args.api_url, queries, ground_truth, drift_threshold=args.drift_threshold
         )
 
         # Save results
@@ -310,16 +323,18 @@ def main():
         results["config"] = {
             "api_url": args.api_url,
             "drift_threshold": args.drift_threshold,
-            "num_queries": len(queries)
+            "num_queries": len(queries),
         }
 
-        with open(args.output, 'w') as f:
+        with open(args.output, "w") as f:
             json.dump(results, f, indent=2)
 
         print(f"\n✓ Results saved to {args.output}")
 
         # Exit with appropriate code
-        if results.get("meets_expectations", {}).get("recall") and results.get("meets_expectations", {}).get("mrr"):
+        if results.get("meets_expectations", {}).get("recall") and results.get(
+            "meets_expectations", {}
+        ).get("mrr"):
             sys.exit(0)
         else:
             sys.exit(1)
@@ -333,6 +348,7 @@ def main():
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

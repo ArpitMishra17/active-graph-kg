@@ -2,7 +2,9 @@
 CORS middleware with environment-based configuration.
 Only enables CORS when explicitly configured via environment variables.
 """
+
 import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -38,7 +40,12 @@ def add_cors_middleware(app: FastAPI) -> None:
         allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After"],
+        expose_headers=[
+            "X-RateLimit-Limit",
+            "X-RateLimit-Remaining",
+            "X-RateLimit-Reset",
+            "Retry-After",
+        ],
     )
 
     print(f"CORS enabled for origins: {allowed_origins}")

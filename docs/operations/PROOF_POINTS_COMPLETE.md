@@ -151,7 +151,7 @@ make scheduler-sla
 export SECOND_TOKEN='<other-tenant-jwt>'
 make governance-audit
 
-export ACTIVEKG_DSN='postgresql://activekg:activekg@localhost:5433/activekg'
+export ACTIVEKG_DSN='postgresql://activekg:activekg@localhost:5432/activekg'
 make db-index-metrics
 make tco-snapshot
 

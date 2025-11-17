@@ -280,7 +280,7 @@ jobs:
           POSTGRES_PASSWORD: activekg
           POSTGRES_DB: activekg
         ports:
-          - 5433:5432
+          - 5432:5432
 
       redis:
         image: redis:7-alpine

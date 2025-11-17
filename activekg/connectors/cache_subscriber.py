@@ -3,14 +3,14 @@
 Subscribes to cache invalidation messages and evicts entries from local cache
 to maintain consistency across multiple workers.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import threading
-import time
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any
 
 from prometheus_client import Counter
 
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Redis pub/sub (optional - graceful degradation if not available)
 try:
     import redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -26,22 +27,16 @@ except ImportError:
 
 # Prometheus metrics
 connector_pubsub_messages_total = Counter(
-    'connector_pubsub_messages_total',
-    'Total Redis pub/sub messages received',
-    ['operation']
+    "connector_pubsub_messages_total", "Total Redis pub/sub messages received", ["operation"]
 )
 connector_pubsub_reconnect_total = Counter(
-    'connector_pubsub_reconnect_total',
-    'Total Redis pub/sub reconnection attempts'
+    "connector_pubsub_reconnect_total", "Total Redis pub/sub reconnection attempts"
 )
 connector_pubsub_shutdown_total = Counter(
-    'connector_pubsub_shutdown_total',
-    'Total Redis pub/sub clean shutdowns'
+    "connector_pubsub_shutdown_total", "Total Redis pub/sub clean shutdowns"
 )
 connector_pubsub_invalid_msg_total = Counter(
-    'connector_pubsub_invalid_msg_total',
-    'Total invalid pub/sub messages dropped',
-    ['reason']
+    "connector_pubsub_invalid_msg_total", "Total invalid pub/sub messages dropped", ["reason"]
 )
 
 
@@ -62,9 +57,9 @@ class CacheSubscriber:
         self.config_store = config_store
         self.channel = "connector:config:changed"
 
-        self._redis_client: Optional[redis.Redis] = None
-        self._pubsub: Optional[redis.client.PubSub] = None
-        self._subscriber_thread: Optional[threading.Thread] = None
+        self._redis_client: redis.Redis | None = None
+        self._pubsub: redis.client.PubSub | None = None
+        self._subscriber_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._running = False
         self._reconnect_delay = 1.0  # Start with 1 second
@@ -72,7 +67,7 @@ class CacheSubscriber:
 
         # Health tracking
         self._connected = False
-        self._last_message_ts: Optional[datetime] = None
+        self._last_message_ts: datetime | None = None
         self._reconnect_count = 0
 
     def start(self) -> None:
@@ -83,9 +78,7 @@ class CacheSubscriber:
 
         self._running = True
         self._subscriber_thread = threading.Thread(
-            target=self._subscribe_loop,
-            daemon=True,
-            name="cache-subscriber"
+            target=self._subscribe_loop, daemon=True, name="cache-subscriber"
         )
         self._subscriber_thread.start()
         logger.info("Cache subscriber started")
@@ -161,8 +154,8 @@ class CacheSubscriber:
                     if not self._running or self._stop_event.is_set():
                         break
 
-                    if message['type'] == 'message':
-                        self._handle_message(message['data'])
+                    if message["type"] == "message":
+                        self._handle_message(message["data"])
 
             except Exception as e:
                 # Check if it's a shutdown error (expected)
@@ -196,9 +189,9 @@ class CacheSubscriber:
                 return
 
             # Validate required fields
-            tenant_id = msg.get('tenant_id')
-            provider = msg.get('provider')
-            operation = msg.get('operation')
+            tenant_id = msg.get("tenant_id")
+            provider = msg.get("provider")
+            operation = msg.get("operation")
 
             if not tenant_id:
                 connector_pubsub_invalid_msg_total.labels(reason="missing_tenant_id").inc()
@@ -218,7 +211,9 @@ class CacheSubscriber:
             # Validate operation value
             if operation not in VALID_OPERATIONS:
                 connector_pubsub_invalid_msg_total.labels(reason="invalid_operation").inc()
-                logger.warning(f"Invalid operation '{operation}' (expected one of {VALID_OPERATIONS})")
+                logger.warning(
+                    f"Invalid operation '{operation}' (expected one of {VALID_OPERATIONS})"
+                )
                 return
 
             # Valid message - evict from local cache
@@ -235,16 +230,13 @@ class CacheSubscriber:
             connector_pubsub_invalid_msg_total.labels(reason="unexpected_error").inc()
             logger.error(f"Unexpected error handling cache invalidation message: {e}")
 
-    def get_health(self) -> Dict[str, Any]:
+    def get_health(self) -> dict[str, Any]:
         """Get subscriber health status.
 
         Returns:
             Health status dict with connected, last_message_ts, reconnects
         """
-        health: Dict[str, Any] = {
-            "connected": self._connected,
-            "reconnects": self._reconnect_count
-        }
+        health: dict[str, Any] = {"connected": self._connected, "reconnects": self._reconnect_count}
 
         if self._last_message_ts:
             health["last_message_ts"] = self._last_message_ts.isoformat() + "Z"
@@ -255,7 +247,7 @@ class CacheSubscriber:
 
 
 # Global subscriber instance
-_subscriber: Optional[CacheSubscriber] = None
+_subscriber: CacheSubscriber | None = None
 
 
 def start_subscriber(redis_url: str, config_store) -> None:
@@ -291,7 +283,7 @@ def stop_subscriber() -> None:
         _subscriber = None
 
 
-def get_subscriber_health() -> Optional[Dict[str, Any]]:
+def get_subscriber_health() -> dict[str, Any] | None:
     """Get global cache subscriber health status.
 
     Returns:

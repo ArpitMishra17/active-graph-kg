@@ -10,7 +10,7 @@
   - RLS multi-tenancy, audit events
 
 - Phase 1.5 — Hardening & UX (In Progress)
-  - Hybrid BM25 + vector + reranker (db/add_text_search.sql)
+  - Hybrid BM25 + vector + reranker (db/migrations/add_text_search.sql)
   - Q&A endpoints with citations: `/ask`, `/ask/stream`
   - Env-tunable knobs (thresholds, tokens, snippets, candidates)
   - Caching for /ask; streaming SSE; metrics polish
@@ -38,4 +38,3 @@
 - One-pager (GitHub Pages), README polish, screencast
 - Benchmarks blog (run_all.sh harness)
 - Channels: HN/PH/Reddit/Twitter/LinkedIn; Postgres Weekly
-

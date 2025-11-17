@@ -62,7 +62,7 @@ if [ "$RUN_ALL" = true ] || [ "$RUN_UNIT" = true ]; then
     echo ""
 
     # Cron fallback tests
-    if python3 test_cron_fallback.py; then
+    if python3 tests/test_cron_fallback.py; then
         echo -e "${GREEN}✓ Cron fallback tests passed${NC}"
         ((TESTS_PASSED++))
     else
@@ -83,7 +83,7 @@ if [ "$RUN_ALL" = true ] || [ "$RUN_BASE" = true ]; then
     fi
 
     # Base engine gap tests (requires DB)
-    if python3 test_base_engine_gaps.py 2>/dev/null; then
+    if python3 tests/test_base_engine_gaps.py 2>/dev/null; then
         echo -e "${GREEN}✓ Base engine gap tests passed${NC}"
         ((TESTS_PASSED++))
     else

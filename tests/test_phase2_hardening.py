@@ -7,9 +7,11 @@ Tests:
 3. Health endpoint GET /_admin/connectors/cache/health
 4. Prometheus metrics tracking
 """
+
+import json
 import os
 import time
-import json
+
 import requests
 from cryptography.fernet import Fernet
 
@@ -27,9 +29,15 @@ print("=" * 60)
 # Test 1: Module imports
 print("\n=== Test 1: Module imports ===")
 try:
-    from activekg.connectors.config_store import get_config_store
-    from activekg.connectors.cache_subscriber import start_subscriber, stop_subscriber, get_subscriber_health
     import redis
+
+    from activekg.connectors.cache_subscriber import (
+        get_subscriber_health,
+        start_subscriber,
+        stop_subscriber,
+    )
+    from activekg.connectors.config_store import get_config_store
+
     print("✓ All modules imported successfully")
 except Exception as e:
     print(f"✗ Import failed: {e}")
@@ -42,10 +50,10 @@ try:
     data = response.json()
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert data["status"] == "degraded", f"Expected degraded status when subscriber not running"
+    assert data["status"] == "degraded", "Expected degraded status when subscriber not running"
     assert data["subscriber"] is None, "Expected None for subscriber when not running"
 
-    print(f"✓ Health endpoint returns degraded when subscriber not running")
+    print("✓ Health endpoint returns degraded when subscriber not running")
     print(f"  Response: {json.dumps(data, indent=2)}")
 except Exception as e:
     print(f"✗ Health endpoint test failed: {e}")
@@ -78,12 +86,12 @@ try:
     data = response.json()
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert data["status"] == "ok", f"Expected ok status when subscriber connected"
+    assert data["status"] == "ok", "Expected ok status when subscriber connected"
     assert data["subscriber"] is not None, "Expected subscriber data"
     assert data["subscriber"]["connected"] is True, "Subscriber should be connected"
     assert data["subscriber"]["reconnects"] == 0, "Should have 0 reconnects"
 
-    print(f"✓ Health endpoint returns ok when subscriber running")
+    print("✓ Health endpoint returns ok when subscriber running")
     print(f"  Response: {json.dumps(data, indent=2)}")
 except Exception as e:
     print(f"✗ Health endpoint test failed: {e}")
@@ -167,11 +175,7 @@ except Exception as e:
 # Test 9: Message validation - invalid operation
 print("\n=== Test 9: Message validation - invalid operation ===")
 try:
-    message = json.dumps({
-        "tenant_id": "test_tenant",
-        "provider": "s3",
-        "operation": "invalid_op"
-    })
+    message = json.dumps({"tenant_id": "test_tenant", "provider": "s3", "operation": "invalid_op"})
     redis_client.publish("connector:config:changed", message)
     time.sleep(0.5)
 
@@ -193,7 +197,7 @@ try:
     config = {
         "endpoint": "https://s3.amazonaws.com",
         "access_key": "test_key",
-        "secret_key": "test_secret"
+        "secret_key": "test_secret",
     }
     store.upsert("test_tenant_hardening", "s3", config)
 
@@ -204,11 +208,9 @@ try:
     print("  Config loaded into cache")
 
     # Publish valid invalidation message
-    valid_message = json.dumps({
-        "tenant_id": "test_tenant_hardening",
-        "provider": "s3",
-        "operation": "upsert"
-    })
+    valid_message = json.dumps(
+        {"tenant_id": "test_tenant_hardening", "provider": "s3", "operation": "upsert"}
+    )
     redis_client.publish("connector:config:changed", valid_message)
     time.sleep(1)
 
@@ -219,7 +221,7 @@ try:
     health = get_subscriber_health()
     assert health.get("last_message_ts") is not None, "Should have last_message_ts"
 
-    print(f"✓ Valid message processed successfully")
+    print("✓ Valid message processed successfully")
     print(f"  Cache invalidated: {cache_invalidated}")
     print(f"  Last message timestamp: {health.get('last_message_ts')}")
 
@@ -257,10 +259,10 @@ try:
     data = response.json()
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert data["status"] == "degraded", f"Expected degraded status after shutdown"
+    assert data["status"] == "degraded", "Expected degraded status after shutdown"
     assert data["subscriber"] is None, "Expected None for subscriber after shutdown"
 
-    print(f"✓ Health endpoint returns degraded after shutdown")
+    print("✓ Health endpoint returns degraded after shutdown")
     print(f"  Response: {json.dumps(data, indent=2)}")
 except Exception as e:
     print(f"✗ Health endpoint after shutdown test failed: {e}")

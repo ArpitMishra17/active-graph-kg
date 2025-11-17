@@ -17,11 +17,12 @@ import argparse
 import json
 import sys
 from datetime import datetime
-from typing import Dict, Any
+from typing import Any
+
 import requests
 
 
-def monitor_freshness_sla(api_url: str) -> Dict[str, Any]:
+def monitor_freshness_sla(api_url: str) -> dict[str, Any]:
     """Monitor freshness SLA for all nodes with refresh policies.
 
     Args:
@@ -42,8 +43,8 @@ def monitor_freshness_sla(api_url: str) -> Dict[str, Any]:
         f"{api_url}/admin/anomalies",
         params={
             "types": "scheduler_lag",
-            "scheduler_lag_multiplier": 1.0  # Find all nodes, even slightly late
-        }
+            "scheduler_lag_multiplier": 1.0,  # Find all nodes, even slightly late
+        },
     )
     resp.raise_for_status()
     data = resp.json()
@@ -85,7 +86,11 @@ def monitor_freshness_sla(api_url: str) -> Dict[str, Any]:
 
     # Calculate average lag ratio
     if scheduler_lag_anomalies:
-        lag_ratios = [a["lag_ratio"] for a in scheduler_lag_anomalies if isinstance(a["lag_ratio"], (int, float))]
+        lag_ratios = [
+            a["lag_ratio"]
+            for a in scheduler_lag_anomalies
+            if isinstance(a["lag_ratio"], (int, float))
+        ]
         avg_lag_ratio = sum(lag_ratios) / len(lag_ratios) if lag_ratios else 0.0
     else:
         avg_lag_ratio = 1.0  # Assume on time if no data
@@ -136,24 +141,26 @@ def monitor_freshness_sla(api_url: str) -> Dict[str, Any]:
         "avg_lag_ratio": avg_lag_ratio,
         "meets_sla": {
             "on_time_target": meets_on_time_target,
-            "overdue_target": meets_overdue_target
+            "overdue_target": meets_overdue_target,
         },
         "worst_offenders": [
             {
                 "node_id": n["node_id"],
                 "lag_ratio": n["lag_ratio"],
                 "expected_interval_seconds": n.get("expected_interval_seconds"),
-                "last_refreshed": n.get("last_refreshed")
+                "last_refreshed": n.get("last_refreshed"),
             }
             for n in sorted(overdue, key=lambda x: x["lag_ratio"], reverse=True)[:10]
-        ]
+        ],
     }
 
 
 def main():
     parser = argparse.ArgumentParser(description="Freshness SLA Monitor")
     parser.add_argument("--api-url", default="http://localhost:8000", help="API base URL")
-    parser.add_argument("--output", default="evaluation/freshness_results.json", help="Output JSON file")
+    parser.add_argument(
+        "--output", default="evaluation/freshness_results.json", help="Output JSON file"
+    )
     args = parser.parse_args()
 
     try:
@@ -164,12 +171,10 @@ def main():
         output = {
             "results": results,
             "timestamp": datetime.now().isoformat(),
-            "config": {
-                "api_url": args.api_url
-            }
+            "config": {"api_url": args.api_url},
         }
 
-        with open(args.output, 'w') as f:
+        with open(args.output, "w") as f:
             json.dump(output, f, indent=2)
 
         print(f"\n✓ Results saved to {args.output}")
@@ -185,6 +190,7 @@ def main():
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

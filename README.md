@@ -5,7 +5,7 @@
 [![Evaluation Setup](https://img.shields.io/badge/Evaluation-Setup_Guide-orange)](EVALUATION_SETUP_GUIDE.md)
 [![Future Improvements](https://img.shields.io/badge/Future-Improvements-purple)](FUTURE_IMPROVEMENTS.md)
 
-**Status:** ✅ Phase 1+ Complete (Production Ready at 90%)
+**Status:** ✅ Production Ready
 **Version:** 1.0.0
 **Last Updated:** 2025-11-06
 
@@ -112,10 +112,38 @@ export ASK_SIM_THRESHOLD=0.30        # similarity cutoff for /ask
 export ASK_MAX_TOKENS=256            # token budget
 export ASK_MAX_SNIPPETS=3            # snippets in context
 export ASK_SNIPPET_LEN=300           # chars per snippet
-export HYBRID_RERANKER_CANDIDATES=20 # cross-encoder candidate pool
+# Optional reranker tuning
+export MAX_RERANK_BUDGET_MS=0        # budget guard; 0 disables guard
+export HYBRID_RERANKER_BASE=20       # initial candidate pool before rerank
+export HYBRID_RERANKER_BOOST=45      # reserved for adaptive boosts
+export HYBRID_ADAPTIVE_THRESHOLD=0.55 # log suggestions when low confidence
 
 uvicorn activekg.api.main:app --reload
 ```
+
+#### ANN Configuration (IVFFLAT/HNSW)
+
+Configure ANN indexes and distance metric via env:
+
+```bash
+# Choose one or both (coexist for migration)
+export PGVECTOR_INDEX=ivfflat            # or hnsw
+export PGVECTOR_INDEXES=ivfflat,hnsw     # both present
+
+# Distance metric must match index opclass
+export SEARCH_DISTANCE=cosine             # or l2
+
+# IVFFLAT tuning
+export IVFFLAT_LISTS=100
+export IVFFLAT_PROBES=4
+
+# HNSW tuning (pgvector >= 0.7)
+export HNSW_M=16
+export HNSW_EF_CONSTRUCTION=128
+export HNSW_EF_SEARCH=80
+```
+
+Ensure/rebuild indexes via `POST /admin/indexes`.
 
 ### 5. Test It
 ```bash
@@ -166,6 +194,44 @@ active-graph-kg/postman/actvgraph-kg.postman_collection.json
 Set `{{base_url}}` (default `http://localhost:8000`) and run requests for /health, /nodes, /search, /triggers, /lineage, /events, and /ask.
 
 ---
+
+## Makefile Shortcuts
+
+Speed up common tasks. Ensure `API` and `TOKEN` are set when required.
+
+```bash
+export API=http://localhost:8000
+export TOKEN='<admin JWT>'
+
+# Core validation
+make live-smoke
+make live-extended
+make metrics-probe
+
+# Retrieval quality + proof report
+make retrieval-quality && make publish-retrieval-uplift
+make proof-report            # writes evaluation/PROOF_POINTS_REPORT.md
+
+# DB bootstrap and indexes
+make db-bootstrap            # uses ACTIVEKG_DSN or DATABASE_URL
+curl -X POST "$API/admin/indexes" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"action":"ensure","types":["ivfflat","hnsw"],"metric":"cosine"}'
+
+# Convenience
+make open-grafana            # opens http://localhost:3000/d/activekg-ops
+```
+
+### Demo Run (Quick)
+
+```bash
+export API=http://localhost:8000
+export TOKEN='<admin JWT>'
+make demo-run && make open-grafana
+```
+
+Notes:
+- The API accepts either `ACTIVEKG_DSN` or `DATABASE_URL` for the database connection.
+- Run exactly one API instance with `RUN_SCHEDULER=true`.
 
 ## Core Features
 
@@ -390,6 +456,11 @@ Integrate with Prometheus + Grafana for dashboards and alerts.
 
 ### Admin
 - `POST /admin/refresh` - Trigger on-demand refresh
+- `POST /admin/indexes` - List/ensure/rebuild/drop ANN indexes (IVFFLAT/HNSW)
+- `GET /_admin/embed_info` - Embedding health (alias of /debug/embed_info)
+- `GET /_admin/embed_class_coverage` - Per-class embedding coverage (RLS‑scoped)
+- `GET /_admin/metrics_summary` - Scheduler/trigger snapshots
+- `GET /_admin/drift_histogram` - Drift distribution (bucketed)
 
 ---
 
@@ -418,13 +489,13 @@ active-graph-kg/
 ├── db/
 │   └── init.sql                       # Schema (nodes, edges, events, patterns)
 ├── enable_rls_policies.sql            # Row-Level Security (177 lines)
-├── enable_vector_index.sql            # HNSW index for fast search
-├── test_phase1_complete.py            # Phase 1 MVP tests
-├── test_phase1_plus.py                # Phase 1+ improvement tests
-├── smoke_test.py                      # E2E integration tests
+├── enable_vector_index.sql            # Vector index helper (IVFFLAT by default; HNSW optional)
+├── tests/test_phase1_complete.py      # Phase 1 MVP tests
+├── tests/test_phase1_plus.py          # Phase 1+ improvement tests
+├── scripts/smoke_test.py              # E2E integration tests
 ├── verify_phase1_plus.sh              # Automated code verification (34 checks)
 ├── PHASE1_PLUS_IMPROVEMENTS.md        # Detailed implementation docs
-├── PHASE1_PLUS_SUMMARY.md             # Executive summary
+├── FINAL_SUMMARY.md                   # Executive summary
 ├── IMPLEMENTATION_STATUS.md           # Feature inventory with code locations
 ├── QUICKSTART.md                      # 5-minute setup guide
 └── README.md                          # This file
@@ -577,13 +648,13 @@ ACTIVEKG_VERSION='1.0.0'
 ./verify_phase1_plus.sh
 
 # Phase 1 MVP tests
-python test_phase1_complete.py
+python tests/test_phase1_complete.py
 
 # Phase 1+ improvement tests
-python test_phase1_plus.py
+python tests/test_phase1_plus.py
 
 # E2E smoke test (requires API running)
-python smoke_test.py
+python scripts/smoke_test.py
 ```
 
 ### Expected Output
@@ -636,7 +707,7 @@ psql -f enable_rls_policies.sql
 
 ### 2. Create Vector Index
 ```bash
-# HNSW recommended for production
+# Choose inside the script: IVFFLAT (default) or HNSW (uncomment the HNSW block)
 psql -f enable_vector_index.sql
 ```
 
@@ -801,13 +872,13 @@ export HYBRID_RERANKER_CANDIDATES=20  # default: 20
 - Small result sets (K < 3)
 - Master toggle disabled (`ASK_USE_RERANKER=false`)
 
-See [RERANKER_SEMANTICS.md](RERANKER_SEMANTICS.md) for details on dual-score architecture.
+See docs/SCORING_MODES.md for details on fusion modes (RRF vs weighted) and reranking.
 
 ### Integration Guide
 
 For step-by-step integration of JWT and rate limiting into your deployment:
 
-1. **Quick start** (30 min): [INTEGRATION_SUMMARY.md](INTEGRATION_SUMMARY.md)
+1. **Quick start** (30 min): [QUICKSTART.md](QUICKSTART.md)
 2. **Detailed examples** (before/after code): [INTEGRATION_EXAMPLE.md](INTEGRATION_EXAMPLE.md)
 3. **Production checklist**: [PRODUCTION_HARDENING_GUIDE.md](PRODUCTION_HARDENING_GUIDE.md)
 4. **Gotchas & fixes**: [INTEGRATION_GOTCHAS.md](INTEGRATION_GOTCHAS.md)
@@ -871,7 +942,7 @@ Active Graph KG documentation is organized into the following structure:
 - **[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)** - Feature inventory with code locations
 
 #### 📖 Implementation Docs
-- **[PHASE1_PLUS_SUMMARY.md](PHASE1_PLUS_SUMMARY.md)** - Executive summary with architecture
+- **[FINAL_SUMMARY.md](FINAL_SUMMARY.md)** - Executive summary with architecture
 - **[PHASE1_PLUS_IMPROVEMENTS.md](PHASE1_PLUS_IMPROVEMENTS.md)** - Detailed implementation guide
 
 #### 📦 Archive
@@ -900,7 +971,16 @@ Historical progress summaries, assessments, and implementation notes have been m
 
 ## License
 
-[Your License Here]
+Dual License:
+- Community: MIT License (see LICENSE)
+- Enterprise: Commercial/permissioned license required (see LICENSE-ENTERPRISE.md)
+
+Summary
+- You may use, modify, and distribute the software under the MIT License for
+  community/open-source purposes.
+- Any enterprise use (e.g., production use by a company or organization) requires
+  written permission or a commercial license. See LICENSE-ENTERPRISE.md for how
+  to request permissions.
 
 ---
 
@@ -908,7 +988,7 @@ Historical progress summaries, assessments, and implementation notes have been m
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Run tests (`./verify_phase1_plus.sh && python test_phase1_plus.py`)
+3. Run tests (`./verify_phase1_plus.sh && python tests/test_phase1_plus.py`)
 4. Commit your changes (`git commit -m 'Add amazing feature'`)
 5. Push to the branch (`git push origin feature/amazing-feature`)
 6. Open a Pull Request

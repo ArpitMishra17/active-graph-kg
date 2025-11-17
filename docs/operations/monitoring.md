@@ -743,11 +743,11 @@ curl -s http://localhost:8000/prometheus | grep activekg_embedding
 
 ### Automated Validation Script
 
-**Location**: `test_prometheus_integration.sh`
+**Location**: `scripts/test_prometheus_integration.sh`
 
 ```bash
-chmod +x test_prometheus_integration.sh
-bash test_prometheus_integration.sh
+chmod +x scripts/test_prometheus_integration.sh
+bash scripts/test_prometheus_integration.sh
 ```
 
 **What It Tests**:
@@ -900,7 +900,7 @@ pip show prometheus-client
   - `activekg/api/main.py` - Endpoint instrumentation
 
 - **Testing**:
-  - `test_prometheus_integration.sh` - Validation script
+  - `scripts/test_prometheus_integration.sh` - Validation script
 
 - **External Resources**:
   - [Prometheus Python Client](https://github.com/prometheus/client_python)

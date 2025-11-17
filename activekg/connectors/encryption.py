@@ -12,11 +12,12 @@ KEK versioning:
 - CONNECTOR_KEK_V1, CONNECTOR_KEK_V2, ...: Versioned KEKs
 - Legacy CONNECTOR_KEK: Falls back to V1 if no versioned KEKs found
 """
+
 from __future__ import annotations
 
-import os
 import logging
-from typing import Dict, Any, List, Optional
+import os
+from typing import Any
 
 from cryptography.fernet import Fernet
 from prometheus_client import Counter
@@ -25,9 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Prometheus metrics
 connector_decrypt_failures_total = Counter(
-    'connector_decrypt_failures_total',
-    'Total connector secret decryption failures',
-    ['field']
+    "connector_decrypt_failures_total", "Total connector secret decryption failures", ["field"]
 )
 
 # Fields to encrypt in connector configs
@@ -37,11 +36,11 @@ SECRET_FIELDS = [
     "api_key",
     "password",
     "token",
-    "credentials"
+    "credentials",
 ]
 
 
-def load_keks() -> Dict[int, Fernet]:
+def load_keks() -> dict[int, Fernet]:
     """Load all available KEKs from environment variables.
 
     Returns:
@@ -101,7 +100,7 @@ def get_active_version() -> int:
 class SecretEncryption:
     """Handles encryption/decryption of connector secrets with KEK rotation support."""
 
-    def __init__(self, keks: Dict[int, Fernet] | None = None, active_version: int | None = None):
+    def __init__(self, keks: dict[int, Fernet] | None = None, active_version: int | None = None):
         """Initialize encryption handler with multi-KEK support.
 
         Args:
@@ -142,7 +141,7 @@ class SecretEncryption:
         ciphertext = self.active_cipher.encrypt(plaintext.encode())
         return ciphertext.decode()
 
-    def decrypt_value(self, ciphertext: str, key_version: Optional[int] = None) -> str:
+    def decrypt_value(self, ciphertext: str, key_version: int | None = None) -> str:
         """Decrypt a single secret value with KEK fallback support.
 
         Tries specified key_version first, then falls back to all available KEKs.
@@ -166,7 +165,9 @@ class SecretEncryption:
                 plaintext = self.keks[key_version].decrypt(ciphertext.encode())
                 return plaintext.decode()
             except Exception:
-                logger.warning(f"Failed to decrypt with specified KEK v{key_version}, trying fallback")
+                logger.warning(
+                    f"Failed to decrypt with specified KEK v{key_version}, trying fallback"
+                )
 
         # Fallback: try all available KEKs
         for version, cipher in self.keks.items():
@@ -179,10 +180,14 @@ class SecretEncryption:
                 continue
 
         # All KEKs failed
-        logger.error(f"Failed to decrypt secret with any available KEK (tried versions: {list(self.keks.keys())})")
+        logger.error(
+            f"Failed to decrypt secret with any available KEK (tried versions: {list(self.keks.keys())})"
+        )
         raise ValueError("Decryption failed with all available KEKs")
 
-    def encrypt_config(self, config: Dict[str, Any], secret_fields: List[str] | None = None) -> Dict[str, Any]:
+    def encrypt_config(
+        self, config: dict[str, Any], secret_fields: list[str] | None = None
+    ) -> dict[str, Any]:
         """Encrypt secret fields in connector config.
 
         Args:
@@ -205,10 +210,10 @@ class SecretEncryption:
 
     def decrypt_config(
         self,
-        config: Dict[str, Any],
-        secret_fields: List[str] | None = None,
-        key_version: Optional[int] = None
-    ) -> Dict[str, Any]:
+        config: dict[str, Any],
+        secret_fields: list[str] | None = None,
+        key_version: int | None = None,
+    ) -> dict[str, Any]:
         """Decrypt secret fields in connector config with KEK fallback support.
 
         Args:
@@ -228,8 +233,10 @@ class SecretEncryption:
             if field in decrypted and decrypted[field]:
                 try:
                     decrypted[field] = self.decrypt_value(decrypted[field], key_version=key_version)
-                except Exception as e:
-                    logger.error(f"Failed to decrypt field '{field}' with KEK v{key_version or 'any'}")
+                except Exception:
+                    logger.error(
+                        f"Failed to decrypt field '{field}' with KEK v{key_version or 'any'}"
+                    )
                     connector_decrypt_failures_total.labels(field=field).inc()
                     # Keep encrypted value, let caller handle
                     pass
@@ -256,7 +263,7 @@ def get_encryption() -> SecretEncryption:
     return _encryption
 
 
-def sanitize_config_for_logging(config: Dict[str, Any]) -> Dict[str, Any]:
+def sanitize_config_for_logging(config: dict[str, Any]) -> dict[str, Any]:
     """Sanitize config for logging by redacting secret fields.
 
     Args:
@@ -293,7 +300,7 @@ if __name__ == "__main__":
         "bucket": "my-bucket",
         "access_key_id": "AKIAIOSFODNN7EXAMPLE",
         "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-        "region": "us-east-1"
+        "region": "us-east-1",
     }
 
     print("Original config:")

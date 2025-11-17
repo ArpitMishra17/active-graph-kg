@@ -209,8 +209,12 @@ class GraphRepository:
                         )
 
                     try:
-                        self.logger.info("Creating vector index", extra_fields={"index": name, "metric": metric, "type": t})
+                        self.logger.info(
+                            "Creating vector index",
+                            extra_fields={"index": name, "metric": metric, "type": t},
+                        )
                         import time
+
                         start_ts = time.time()
                         cur.execute(sql)
                         duration = time.time() - start_ts
@@ -222,7 +226,9 @@ class GraphRepository:
                             pass
                         created.append(name)
                     except psycopg.errors.DuplicateTable:
-                        self.logger.info("Index created by another replica", extra_fields={"index": name})
+                        self.logger.info(
+                            "Index created by another replica", extra_fields={"index": name}
+                        )
                         try:
                             from activekg.observability.metrics import track_index_build
 
@@ -230,10 +236,13 @@ class GraphRepository:
                         except Exception:
                             pass
                     except Exception as ce:
-                        self.logger.error("Index creation failed", extra_fields={"index": name, "error": str(ce)})
+                        self.logger.error(
+                            "Index creation failed", extra_fields={"index": name, "error": str(ce)}
+                        )
                         try:
-                            from activekg.observability.metrics import track_index_build
                             import time
+
+                            from activekg.observability.metrics import track_index_build
 
                             track_index_build(0.0, type_=t, metric=metric, result="error")
                         except Exception:
@@ -286,17 +295,31 @@ class GraphRepository:
                         cur.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
                         dropped.append(name)
                     except Exception as e:
-                        self.logger.error("DROP INDEX failed", extra_fields={"index": name, "error": str(e)})
+                        self.logger.error(
+                            "DROP INDEX failed", extra_fields={"index": name, "error": str(e)}
+                        )
             conn.close()
         except Exception as e:
             self.logger.error("drop_vector_indexes failed", extra_fields={"error": str(e)})
         return dropped
 
-    def planned_index_names(self, types: list[str] | None = None, metric: str | None = None) -> list[str]:
+    def planned_index_names(
+        self, types: list[str] | None = None, metric: str | None = None
+    ) -> list[str]:
         """Compute expected ANN index names for given types and metric."""
         metric = (metric or os.getenv("SEARCH_DISTANCE", "cosine")).lower()
         suffix = "l2" if metric == "l2" else "cos"
-        types = types or [t.strip().lower() for t in (os.getenv("PGVECTOR_INDEXES") or os.getenv("PGVECTOR_INDEX") or "").split(",") if t.strip()] or ["ivfflat"]
+        types = (
+            types
+            or [
+                t.strip().lower()
+                for t in (os.getenv("PGVECTOR_INDEXES") or os.getenv("PGVECTOR_INDEX") or "").split(
+                    ","
+                )
+                if t.strip()
+            ]
+            or ["ivfflat"]
+        )
         out: list[str] = []
         for t in types:
             if t in ("ivfflat", "hnsw"):
@@ -333,6 +356,7 @@ class GraphRepository:
                                 return cur.fetchone() is not None
                             except Exception:
                                 return False
+
                         if "hnsw" in targets and guc_exists("hnsw.ef_search"):
                             ef_search = int(os.getenv("HNSW_EF_SEARCH", "80"))
                             # SET LOCAL is not parameterizable in all servers; inline sanitized integer
@@ -347,7 +371,9 @@ class GraphRepository:
                             cur.execute("ROLLBACK TO SAVEPOINT akg_guc")
                         except Exception:
                             pass
-                        self.logger.warning("ANN per-query tuning skipped", extra_fields={"error": str(e)})
+                        self.logger.warning(
+                            "ANN per-query tuning skipped", extra_fields={"error": str(e)}
+                        )
                 except Exception:
                     # Savepoint creation or env parsing failed: skip tuning entirely
                     pass
@@ -758,12 +784,14 @@ class GraphRepository:
                         targets = ["ivfflat"]
                     cur.execute("SAVEPOINT akg_guc")
                     try:
+
                         def guc_exists(name: str) -> bool:
                             try:
                                 cur.execute("SELECT 1 FROM pg_settings WHERE name = %s", (name,))
                                 return cur.fetchone() is not None
                             except Exception:
                                 return False
+
                         if "hnsw" in targets and guc_exists("hnsw.ef_search"):
                             ef_search = int(os.getenv("HNSW_EF_SEARCH", "80"))
                             cur.execute(f"SET LOCAL hnsw.ef_search = {ef_search}")
@@ -776,7 +804,9 @@ class GraphRepository:
                             cur.execute("ROLLBACK TO SAVEPOINT akg_guc")
                         except Exception:
                             pass
-                        self.logger.warning("ANN per-query tuning skipped", extra_fields={"error": str(e)})
+                        self.logger.warning(
+                            "ANN per-query tuning skipped", extra_fields={"error": str(e)}
+                        )
                 except Exception:
                     pass
                 if os.getenv("ACTIVEKG_DEBUG_RLS", "false").lower() == "true":

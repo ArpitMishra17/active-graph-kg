@@ -15,7 +15,7 @@ docker compose up -d
 psql -h localhost -U activekg -d activekg -f db/init.sql
 
 # Enable hybrid text search (BM25) for hybrid retrieval
-psql -h localhost -U activekg -d activekg -f db/add_text_search.sql
+psql -h localhost -U activekg -d activekg -f db/migrations/add_text_search.sql
 
 # Verify tables created
 psql -h localhost -U activekg -d activekg -c "\dt"
@@ -53,7 +53,7 @@ uvicorn activekg.api.main:app --reload
 ### **5. Run Smoke Test**
 ```bash
 # In separate terminal
-python smoke_test.py
+python scripts/smoke_test.py
 ```
 
 **Expected Output:**
@@ -368,7 +368,7 @@ python scheduler_runner.py
 | `activekg/refresh/scheduler.py` | Refresh cycle with drift gating, trigger integration | 94 |
 | `activekg/triggers/pattern_store.py` | DB-backed pattern persistence | 78 |
 | `activekg/api/main.py` | All 11 API endpoints | 249 |
-| `smoke_test.py` | E2E validation | 233 |
+| `scripts/smoke_test.py` | E2E validation | 233 |
 | `enable_vector_index.sql` | Vector index creation | 17 |
 
 ---
@@ -381,7 +381,7 @@ python scheduler_runner.py
    - File/HTTP/S3 size limits
 
 2. **Evaluate Hybrid Retrieval**:
-   - Ensure `db/add_text_search.sql` applied
+   - Ensure `db/migrations/add_text_search.sql` applied
    - Use `/search` with `use_hybrid=true` or rely on hybrid inside `/ask`
    - Tune `HYBRID_RERANKER_CANDIDATES`
 

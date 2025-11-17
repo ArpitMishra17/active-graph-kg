@@ -3,29 +3,34 @@
 Comprehensive Backend Readiness Checker for Active Graph KG.
 Tests all endpoints and functionality before UI development.
 """
+
+import json
 import os
 import sys
-import json
-import requests
-from datetime import datetime
 import time
+from datetime import datetime
+
+import requests
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 ADMIN_TOKEN = None
 USER_TOKEN = None
 
+
 class Colors:
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+
 
 def print_section(title):
     print(f"\n{Colors.BOLD}{Colors.BLUE}{'=' * 60}{Colors.ENDC}")
     print(f"{Colors.BOLD}{Colors.BLUE}{title}{Colors.ENDC}")
     print(f"{Colors.BOLD}{Colors.BLUE}{'=' * 60}{Colors.ENDC}\n")
+
 
 def print_test(name, passed, details=""):
     status = f"{Colors.GREEN}✓ PASS{Colors.ENDC}" if passed else f"{Colors.RED}✗ FAIL{Colors.ENDC}"
@@ -33,8 +38,10 @@ def print_test(name, passed, details=""):
     if details:
         print(f"  {Colors.YELLOW}{details}{Colors.ENDC}")
 
+
 def print_info(msg):
     print(f"{Colors.BLUE}ℹ {msg}{Colors.ENDC}")
+
 
 def test_health():
     """Test health endpoint."""
@@ -49,6 +56,7 @@ def test_health():
         print_test("Health endpoint", False, str(e))
         return False
 
+
 def test_prometheus():
     """Test Prometheus metrics endpoint."""
     try:
@@ -59,6 +67,7 @@ def test_prometheus():
     except Exception as e:
         print_test("Prometheus metrics", False, str(e))
         return False
+
 
 def test_json_metrics():
     """Test JSON metrics endpoint."""
@@ -72,6 +81,7 @@ def test_json_metrics():
         print_test("JSON metrics", False, str(e))
         return False
 
+
 def test_admin_migrate():
     """Test database migration endpoint."""
     print_section("Schema Bootstrap")
@@ -79,7 +89,7 @@ def test_admin_migrate():
         resp = requests.post(
             f"{API_URL}/admin/migrate",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=30
+            timeout=30,
         )
         data = resp.json()
         passed = resp.status_code == 200 and data.get("status") == "ok"
@@ -89,22 +99,24 @@ def test_admin_migrate():
         print_test("POST /admin/migrate", False, str(e))
         return False
 
+
 def test_db_status():
     """Test database status endpoint."""
     try:
         resp = requests.get(
             f"{API_URL}/admin/db_status",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         data = resp.json()
-        passed = resp.status_code == 200 and data.get("tables", {}).get("nodes") == True
+        passed = resp.status_code == 200 and data.get("tables", {}).get("nodes")
         details = f"Tables: {data.get('tables', {})}, Vector Index: {data.get('indexes', {}).get('vector_index')}"
         print_test("GET /admin/db_status", passed, details)
         return passed
     except Exception as e:
         print_test("GET /admin/db_status", False, str(e))
         return False
+
 
 def test_node_crud():
     """Test Node CRUD operations."""
@@ -119,9 +131,9 @@ def test_node_crud():
             json={
                 "class_name": "TestDoc",
                 "text": "This is a test document for readiness checking.",
-                "properties": {"test": True, "timestamp": datetime.now().isoformat()}
+                "properties": {"test": True, "timestamp": datetime.now().isoformat()},
             },
-            timeout=10
+            timeout=10,
         )
         data = resp.json()
         passed = resp.status_code == 200 and "id" in data
@@ -139,7 +151,7 @@ def test_node_crud():
         resp = requests.get(
             f"{API_URL}/nodes/{node_id}",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         data = resp.json()
         passed = resp.status_code == 200 and data.get("id") == node_id
@@ -152,7 +164,7 @@ def test_node_crud():
         resp = requests.get(
             f"{API_URL}/nodes?limit=10",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         data = resp.json()
         passed = resp.status_code == 200 and "nodes" in data
@@ -166,7 +178,7 @@ def test_node_crud():
             f"{API_URL}/nodes/{node_id}",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}", "Content-Type": "application/json"},
             json={"properties": {"test": True, "updated": True}},
-            timeout=10
+            timeout=10,
         )
         passed = resp.status_code == 200
         print_test("PUT /nodes/{id} (update)", passed, "Node updated")
@@ -178,7 +190,7 @@ def test_node_crud():
         resp = requests.delete(
             f"{API_URL}/nodes/{node_id}",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         passed = resp.status_code == 200
         print_test("DELETE /nodes/{id} (soft)", passed, "Node soft-deleted")
@@ -188,16 +200,19 @@ def test_node_crud():
             # Create another node for hard delete test
             resp2 = requests.post(
                 f"{API_URL}/nodes",
-                headers={"Authorization": f"Bearer {ADMIN_TOKEN}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {ADMIN_TOKEN}",
+                    "Content-Type": "application/json",
+                },
                 json={"class_name": "TestDoc", "text": "To be hard deleted"},
-                timeout=10
+                timeout=10,
             )
             if resp2.status_code == 200:
                 hard_node_id = resp2.json().get("id")
                 resp3 = requests.delete(
                     f"{API_URL}/nodes/{hard_node_id}?hard=true",
                     headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-                    timeout=10
+                    timeout=10,
                 )
                 passed = resp3.status_code == 200
                 print_test("DELETE /nodes/{id}?hard=true (hard)", passed, "Node hard-deleted")
@@ -205,6 +220,7 @@ def test_node_crud():
         print_test("DELETE /nodes/{id} (soft)", False, str(e))
 
     return True
+
 
 def test_search():
     """Test search endpoints."""
@@ -218,11 +234,11 @@ def test_search():
             json={
                 "class_name": "SearchableDoc",
                 "text": "Machine learning and artificial intelligence are transforming technology.",
-                "properties": {"category": "AI"}
+                "properties": {"category": "AI"},
             },
-            timeout=10
+            timeout=10,
         )
-    except:
+    except Exception:
         pass
 
     time.sleep(2)  # Wait for indexing
@@ -232,16 +248,14 @@ def test_search():
         resp = requests.post(
             f"{API_URL}/search",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}", "Content-Type": "application/json"},
-            json={
-                "query": "machine learning",
-                "mode": "weighted",
-                "top_k": 10
-            },
-            timeout=10
+            json={"query": "machine learning", "mode": "weighted", "top_k": 10},
+            timeout=10,
         )
         data = resp.json()
         passed = resp.status_code == 200 and "results" in data
-        print_test("POST /search (weighted)", passed, f"Found {len(data.get('results', []))} results")
+        print_test(
+            "POST /search (weighted)", passed, f"Found {len(data.get('results', []))} results"
+        )
     except Exception as e:
         print_test("POST /search (weighted)", False, str(e))
 
@@ -250,12 +264,13 @@ def test_search():
         resp = requests.get(
             f"{API_URL}/debug/search_sanity",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         passed = resp.status_code == 200
         print_test("GET /debug/search_sanity", passed, resp.text[:100])
     except Exception as e:
         print_test("GET /debug/search_sanity", False, str(e))
+
 
 def test_qa():
     """Test Q&A endpoints."""
@@ -266,11 +281,8 @@ def test_qa():
         resp = requests.post(
             f"{API_URL}/ask",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}", "Content-Type": "application/json"},
-            json={
-                "question": "What is machine learning?",
-                "top_k": 5
-            },
-            timeout=30
+            json={"question": "What is machine learning?", "top_k": 5},
+            timeout=30,
         )
         data = resp.json()
         passed = resp.status_code == 200 and "answer" in data
@@ -284,18 +296,15 @@ def test_qa():
         resp = requests.post(
             f"{API_URL}/ask/stream",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}", "Content-Type": "application/json"},
-            json={
-                "question": "Explain AI briefly",
-                "stream": True
-            },
+            json={"question": "Explain AI briefly", "stream": True},
             stream=True,
-            timeout=30
+            timeout=30,
         )
         chunks = []
         for line in resp.iter_lines():
             if line:
-                decoded = line.decode('utf-8')
-                if decoded.startswith('data: '):
+                decoded = line.decode("utf-8")
+                if decoded.startswith("data: "):
                     chunks.append(decoded[6:])
             if len(chunks) >= 3:  # Just test a few chunks
                 break
@@ -303,6 +312,7 @@ def test_qa():
         print_test("POST /ask/stream (SSE)", passed, f"Received {len(chunks)} chunks")
     except Exception as e:
         print_test("POST /ask/stream (SSE)", False, str(e))
+
 
 def test_events_lineage():
     """Test events and lineage."""
@@ -313,7 +323,7 @@ def test_events_lineage():
         resp = requests.get(
             f"{API_URL}/events?limit=20",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         data = resp.json()
         passed = resp.status_code == 200 and "events" in data
@@ -328,7 +338,7 @@ def test_events_lineage():
             f"{API_URL}/nodes",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}", "Content-Type": "application/json"},
             json={"class_name": "Parent", "text": "Parent node"},
-            timeout=10
+            timeout=10,
         )
         parent_id = resp1.json().get("id")
 
@@ -337,7 +347,7 @@ def test_events_lineage():
             f"{API_URL}/nodes",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}", "Content-Type": "application/json"},
             json={"class_name": "Child", "text": "Child node"},
-            timeout=10
+            timeout=10,
         )
         child_id = resp2.json().get("id")
 
@@ -348,9 +358,9 @@ def test_events_lineage():
             json={
                 "source_id": parent_id,
                 "target_id": child_id,
-                "relationship_type": "DERIVED_FROM"
+                "relationship_type": "DERIVED_FROM",
             },
-            timeout=10
+            timeout=10,
         )
         passed = resp3.status_code == 200
         print_test("POST /edges (create)", passed, f"Edge: {parent_id} -> {child_id}")
@@ -360,25 +370,30 @@ def test_events_lineage():
             resp4 = requests.get(
                 f"{API_URL}/lineage/{child_id}",
                 headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-                timeout=10
+                timeout=10,
             )
             data = resp4.json()
             passed = resp4.status_code == 200 and "ancestors" in data
-            print_test("GET /lineage/{id}", passed, f"Found {len(data.get('ancestors', []))} ancestors")
+            print_test(
+                "GET /lineage/{id}", passed, f"Found {len(data.get('ancestors', []))} ancestors"
+            )
     except Exception as e:
         print_test("Lineage test", False, str(e))
+
 
 def test_triggers():
     """Test trigger endpoints."""
     try:
         # List triggers
         resp = requests.get(
-            f"{API_URL}/triggers",
-            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            f"{API_URL}/triggers", headers={"Authorization": f"Bearer {ADMIN_TOKEN}"}, timeout=10
         )
         passed = resp.status_code == 200
-        print_test("GET /triggers (list)", passed, f"Status: {resp.status_code}, Found: {len(resp.json().get('triggers', []))}")
+        print_test(
+            "GET /triggers (list)",
+            passed,
+            f"Status: {resp.status_code}, Found: {len(resp.json().get('triggers', []))}",
+        )
 
         # Create trigger
         resp2 = requests.post(
@@ -387,13 +402,15 @@ def test_triggers():
             json={
                 "name": "test_trigger_readiness",
                 "example_text": "This is a test document for trigger matching",
-                "description": "Test trigger for readiness check"
+                "description": "Test trigger for readiness check",
             },
-            timeout=10
+            timeout=10,
         )
         passed = resp2.status_code == 200
         trigger_name = resp2.json().get("name") if resp2.status_code == 200 else None
-        print_test("POST /triggers (create)", passed, f"Status: {resp2.status_code}, Name: {trigger_name}")
+        print_test(
+            "POST /triggers (create)", passed, f"Status: {resp2.status_code}, Name: {trigger_name}"
+        )
 
         # Check for trigger_fired events
         if passed:
@@ -401,13 +418,16 @@ def test_triggers():
             resp3 = requests.get(
                 f"{API_URL}/events?event_type=trigger_fired&limit=10",
                 headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-                timeout=10
+                timeout=10,
             )
             if resp3.status_code == 200:
                 events = resp3.json().get("events", [])
-                print_test("Trigger events check", True, f"Found {len(events)} trigger_fired events")
+                print_test(
+                    "Trigger events check", True, f"Found {len(events)} trigger_fired events"
+                )
     except Exception as e:
         print_test("Triggers test", False, str(e))
+
 
 def test_admin_refresh():
     """Test admin refresh endpoint."""
@@ -417,7 +437,7 @@ def test_admin_refresh():
         resp = requests.get(
             f"{API_URL}/nodes?limit=5",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         nodes = resp.json().get("nodes", [])
 
@@ -425,9 +445,12 @@ def test_admin_refresh():
             node_ids = [n["id"] for n in nodes[:2]]
             resp2 = requests.post(
                 f"{API_URL}/admin/refresh",
-                headers={"Authorization": f"Bearer {ADMIN_TOKEN}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {ADMIN_TOKEN}",
+                    "Content-Type": "application/json",
+                },
                 json={"node_ids": node_ids},
-                timeout=30
+                timeout=30,
             )
             data = resp2.json()
             passed = resp2.status_code == 200
@@ -436,6 +459,7 @@ def test_admin_refresh():
             print_test("POST /admin/refresh", False, "No nodes to refresh")
     except Exception as e:
         print_test("POST /admin/refresh", False, str(e))
+
 
 def test_connectors_admin():
     """Test connector admin endpoints."""
@@ -446,11 +470,13 @@ def test_connectors_admin():
         resp = requests.get(
             f"{API_URL}/_admin/connectors/",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         data = resp.json()
         passed = resp.status_code == 200
-        print_test("GET /_admin/connectors/", passed, f"Found {len(data.get('connectors', []))} connectors")
+        print_test(
+            "GET /_admin/connectors/", passed, f"Found {len(data.get('connectors', []))} connectors"
+        )
     except Exception as e:
         print_test("GET /_admin/connectors/", False, str(e))
 
@@ -459,12 +485,13 @@ def test_connectors_admin():
         resp = requests.get(
             f"{API_URL}/_admin/connectors/cache/health",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         passed = resp.status_code == 200
         print_test("GET /_admin/connectors/cache/health", passed, resp.text[:100])
     except Exception as e:
         print_test("GET /_admin/connectors/cache/health", False, str(e))
+
 
 def test_auth_rls():
     """Test authentication and RLS."""
@@ -475,7 +502,7 @@ def test_auth_rls():
         resp = requests.get(
             f"{API_URL}/admin/db_status",
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         passed = resp.status_code == 200
         print_test("Admin endpoint with admin:refresh scope", passed, "Access granted")
@@ -487,7 +514,7 @@ def test_auth_rls():
         resp = requests.get(
             f"{API_URL}/admin/db_status",
             headers={"Authorization": f"Bearer {USER_TOKEN}"},
-            timeout=10
+            timeout=10,
         )
         passed = resp.status_code == 403
         print_test("Admin endpoint without admin:refresh scope", passed, "Correctly denied access")
@@ -496,10 +523,7 @@ def test_auth_rls():
 
     # Test endpoint without token (should fail)
     try:
-        resp = requests.get(
-            f"{API_URL}/nodes",
-            timeout=10
-        )
+        resp = requests.get(f"{API_URL}/nodes", timeout=10)
         passed = resp.status_code == 401
         print_test("Endpoint without JWT token", passed, "Correctly requires authentication")
     except Exception as e:
@@ -510,25 +534,22 @@ def test_auth_rls():
     try:
         # Generate token for tenant A
         import subprocess
+
         result_a = subprocess.run(
-            ["python3", "generate_test_jwt.py", "tenant_a"],
-            capture_output=True,
-            text=True
+            ["python3", "generate_test_jwt.py", "tenant_a"], capture_output=True, text=True
         )
         token_a = None
-        for line in result_a.stdout.split('\n'):
+        for line in result_a.stdout.split("\n"):
             if "Admin Token:" in line:
                 token_a = line.split("Admin Token:")[1].strip()
                 break
 
         # Generate token for tenant B
         result_b = subprocess.run(
-            ["python3", "generate_test_jwt.py", "tenant_b"],
-            capture_output=True,
-            text=True
+            ["python3", "generate_test_jwt.py", "tenant_b"], capture_output=True, text=True
         )
         token_b = None
-        for line in result_b.stdout.split('\n'):
+        for line in result_b.stdout.split("\n"):
             if "Admin Token:" in line:
                 token_b = line.split("Admin Token:")[1].strip()
                 break
@@ -538,8 +559,12 @@ def test_auth_rls():
             resp_create = requests.post(
                 f"{API_URL}/nodes",
                 headers={"Authorization": f"Bearer {token_a}", "Content-Type": "application/json"},
-                json={"class_name": "RLSTest", "text": "Tenant A node", "properties": {"tenant": "a"}},
-                timeout=10
+                json={
+                    "class_name": "RLSTest",
+                    "text": "Tenant A node",
+                    "properties": {"tenant": "a"},
+                },
+                timeout=10,
             )
 
             if resp_create.status_code == 200:
@@ -549,25 +574,27 @@ def test_auth_rls():
                 resp_a = requests.get(
                     f"{API_URL}/nodes/{node_id}",
                     headers={"Authorization": f"Bearer {token_a}"},
-                    timeout=10
+                    timeout=10,
                 )
 
                 # Try to access as tenant B (should fail with 404)
                 resp_b = requests.get(
                     f"{API_URL}/nodes/{node_id}",
                     headers={"Authorization": f"Bearer {token_b}"},
-                    timeout=10
+                    timeout=10,
                 )
 
                 passed = resp_a.status_code == 200 and resp_b.status_code == 404
-                details = f"Tenant A: {resp_a.status_code}, Tenant B: {resp_b.status_code} (expect 404)"
+                details = (
+                    f"Tenant A: {resp_a.status_code}, Tenant B: {resp_b.status_code} (expect 404)"
+                )
                 print_test("RLS tenant isolation (cross-tenant access)", passed, details)
 
                 # Cleanup
                 requests.delete(
                     f"{API_URL}/nodes/{node_id}?hard=true",
                     headers={"Authorization": f"Bearer {token_a}"},
-                    timeout=10
+                    timeout=10,
                 )
             else:
                 print_test("RLS tenant isolation", False, "Failed to create test node")
@@ -576,27 +603,31 @@ def test_auth_rls():
     except Exception as e:
         print_test("RLS tenant isolation", False, str(e))
 
+
 def run_regression_tests():
     """Run existing regression test scripts."""
     print_section("Regression Tests")
 
     tests = [
-        ("smoke_test.py", "Smoke test"),
-        ("test_phase1_complete.py", "Phase 1 complete test"),
-        ("test_prometheus_metrics.py", "Prometheus metrics test"),
+        ("scripts/smoke_test.py", "Smoke test"),
+        ("tests/test_phase1_complete.py", "Phase 1 complete test"),
+        ("tests/test_prometheus_metrics.py", "Prometheus metrics test"),
     ]
 
     for test_file, test_name in tests:
         if os.path.exists(test_file):
             try:
                 print_info(f"Running {test_file}...")
-                result = os.system(f"source venv/bin/activate && source .env.test && python3 {test_file} >/dev/null 2>&1")
+                result = os.system(
+                    f"source venv/bin/activate && source .env.test && python3 {test_file} >/dev/null 2>&1"
+                )
                 passed = result == 0
                 print_test(test_name, passed, f"Exit code: {result}")
             except Exception as e:
                 print_test(test_name, False, str(e))
         else:
             print_info(f"Skipping {test_file} (not found)")
+
 
 def main():
     global ADMIN_TOKEN, USER_TOKEN
@@ -612,12 +643,9 @@ def main():
     # Generate tokens
     print_info("Generating JWT tokens...")
     import subprocess
-    result = subprocess.run(
-        ["python3", "generate_test_jwt.py"],
-        capture_output=True,
-        text=True
-    )
-    lines = result.stdout.split('\n')
+
+    result = subprocess.run(["python3", "generate_test_jwt.py"], capture_output=True, text=True)
+    lines = result.stdout.split("\n")
     for line in lines:
         if "Admin Token:" in line:
             ADMIN_TOKEN = line.split("Admin Token:")[1].strip()
@@ -669,11 +697,16 @@ def main():
     print(f"{Colors.RED}Failed: {total - passed}{Colors.ENDC}")
 
     if passed == total:
-        print(f"\n{Colors.GREEN}{Colors.BOLD}✓ ALL TESTS PASSED - Backend is ready for UI development!{Colors.ENDC}")
+        print(
+            f"\n{Colors.GREEN}{Colors.BOLD}✓ ALL TESTS PASSED - Backend is ready for UI development!{Colors.ENDC}"
+        )
         return 0
     else:
-        print(f"\n{Colors.YELLOW}{Colors.BOLD}⚠ Some tests failed - review issues before proceeding{Colors.ENDC}")
+        print(
+            f"\n{Colors.YELLOW}{Colors.BOLD}⚠ Some tests failed - review issues before proceeding{Colors.ENDC}"
+        )
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

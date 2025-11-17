@@ -20,15 +20,15 @@ Expected output: `✅ ALL CHECKS PASSED - Phase 1+ Complete!` (34/34 checks)
 Run comprehensive tests:
 ```bash
 # Phase 1 MVP tests
-python test_phase1_complete.py
+python tests/test_phase1_complete.py
 
 # Phase 1+ improvement tests
-python test_phase1_plus.py
+python tests/test_phase1_plus.py
 
 # E2E smoke test (requires API running)
 uvicorn activekg.api.main:app --reload &
 sleep 5
-python smoke_test.py
+python scripts/smoke_test.py
 ```
 
 ---

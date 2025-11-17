@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Test SSE streaming latency for /ask/stream endpoint."""
-import time
-import requests
+
 import sys
+import time
+from datetime import UTC, datetime, timedelta
 
 # Generate test JWT
 import jwt
-from datetime import datetime, timedelta, timezone
+import requests
 
 SECRET_KEY = "test-secret-key-min-32-chars-long-for-testing-purposes"
 ALGORITHM = "HS256"
 AUDIENCE = "activekg"
 ISSUER = "https://test-auth.activekg.local"
 
+
 def generate_token():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": "test-user",
         "tenant_id": "test_tenant",
@@ -28,19 +30,14 @@ def generate_token():
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
+
 def test_sse_latency():
     token = generate_token()
     url = "http://localhost:8000/ask/stream"
 
-    payload = {
-        "question": "Test",
-        "stream": True
-    }
+    payload = {"question": "Test", "stream": True}
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     print("🔍 Testing SSE streaming latency...")
     print(f"URL: {url}")
@@ -66,16 +63,16 @@ def test_sse_latency():
                     print(f"\n✅ First chunk received: {latency_ms:.1f}ms")
 
                     if latency_ms < 300:
-                        print(f"   ✅ PASS: Latency < 300ms")
+                        print("   ✅ PASS: Latency < 300ms")
                     else:
-                        print(f"   ⚠️  WARNING: Latency >= 300ms (expected < 300ms)")
+                        print("   ⚠️  WARNING: Latency >= 300ms (expected < 300ms)")
 
                     # Decode first chunk to show content
                     try:
-                        decoded = line.decode('utf-8')
-                        if decoded.startswith('data: '):
+                        decoded = line.decode("utf-8")
+                        if decoded.startswith("data: "):
                             print(f"   Content: {decoded[6:50]}...")
-                    except:
+                    except Exception:
                         pass
 
                 # Stop after getting a few chunks
@@ -83,7 +80,7 @@ def test_sse_latency():
                     break
 
         total_time = time.time() - start_time
-        print(f"\n📊 Stats:")
+        print("\n📊 Stats:")
         print(f"   Total chunks received: {chunk_count}")
         print(f"   Total time: {total_time * 1000:.1f}ms")
         print(f"   First chunk latency: {(first_chunk_time - start_time) * 1000:.1f}ms")
@@ -93,6 +90,7 @@ def test_sse_latency():
     except requests.exceptions.RequestException as e:
         print(f"\n❌ ERROR: {e}")
         return False
+
 
 if __name__ == "__main__":
     success = test_sse_latency()

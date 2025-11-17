@@ -109,7 +109,7 @@ source venv/bin/activate
 Or run specific unit tests:
 
 ```bash
-python3 test_cron_fallback.py
+python3 tests/test_cron_fallback.py
 ```
 
 ### Option 4: Run Security Tests
@@ -626,12 +626,12 @@ psql $ACTIVEKG_DSN -c "SELECT id, label, created_at, last_refreshed FROM nodes L
 
 ### Unit Tests
 
-**Location**: `/home/ews/active-graph-kg/`
+**Location**: `tests/`
 
 #### `test_cron_fallback.py` (140 lines)
 **Purpose**: Test cron fallback logic without database
 **Status**: ✅ 3/3 passing
-**Run**: `python3 test_cron_fallback.py`
+**Run**: `python3 tests/test_cron_fallback.py`
 
 **Tests:**
 1. Invalid cron + valid interval → falls back to interval
@@ -642,13 +642,13 @@ psql $ACTIVEKG_DSN -c "SELECT id, label, created_at, last_refreshed FROM nodes L
 
 ### Integration Tests
 
-**Location**: `/home/ews/active-graph-kg/`
+**Location**: `tests/`
 
 #### `test_base_engine_gaps.py` (300 lines)
 **Purpose**: Test vector index, weighted search, cron expressions
 **Status**: ✅ 3/3 passing
 **Requires**: PostgreSQL with pgvector
-**Run**: `python3 test_base_engine_gaps.py`
+**Run**: `python3 tests/test_base_engine_gaps.py`
 
 **Tests:**
 1. Vector index auto-creation on startup
@@ -660,7 +660,7 @@ psql $ACTIVEKG_DSN -c "SELECT id, label, created_at, last_refreshed FROM nodes L
 #### `test_phase1_complete.py`
 **Purpose**: Comprehensive Phase 1 feature tests
 **Requires**: PostgreSQL with pgvector
-**Run**: `python3 test_phase1_complete.py`
+**Run**: `python3 tests/test_phase1_complete.py`
 
 **Tests:**
 - Node CRUD operations
@@ -674,7 +674,7 @@ psql $ACTIVEKG_DSN -c "SELECT id, label, created_at, last_refreshed FROM nodes L
 #### `test_jwt_rls_complete.py`
 **Purpose**: JWT authentication and RLS policy tests
 **Requires**: PostgreSQL with RLS enabled
-**Run**: `python3 test_jwt_rls_complete.py`
+**Run**: `python3 tests/test_jwt_rls_complete.py`
 
 **Tests:**
 - JWT token validation

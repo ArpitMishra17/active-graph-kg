@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Generate test JWT tokens for backend testing."""
+
 import os
+from datetime import UTC, datetime, timedelta
+
 import jwt
-from datetime import datetime, timedelta, timezone
 
 # Load from environment
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "test-secret-key-min-32-chars-long-for-testing-purposes")
@@ -10,12 +12,13 @@ ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 AUDIENCE = os.getenv("JWT_AUDIENCE", "activekg")
 ISSUER = os.getenv("JWT_ISSUER", "https://test-auth.activekg.local")
 
+
 def generate_token(tenant_id="test_tenant", scopes=None, user_id="test-user"):
     """Generate a JWT token for testing."""
     if scopes is None:
         scopes = ["read", "write", "admin:refresh"]
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": user_id,
         "tenant_id": tenant_id,
@@ -30,6 +33,7 @@ def generate_token(tenant_id="test_tenant", scopes=None, user_id="test-user"):
 
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return token
+
 
 if __name__ == "__main__":
     import sys

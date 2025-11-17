@@ -9,32 +9,31 @@ Security features:
 References:
 - https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html
 """
+
 from __future__ import annotations
 
-import os
 import base64
 import logging
-import hashlib
-from typing import Dict, Any, Optional
-from urllib.parse import urlparse
+import os
 from datetime import datetime, timedelta
-from functools import lru_cache
+from typing import Any
+from urllib.parse import urlparse
 
 import requests
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.backends import default_backend
-from cryptography.exceptions import InvalidSignature
 
 logger = logging.getLogger(__name__)
 
 # Certificate cache TTL (seconds)
 CERT_CACHE_TTL = int(os.getenv("WEBHOOK_CERT_CACHE_TTL", "3600"))  # 1 hour default
-CERT_HTTP_TIMEOUT = int(os.getenv("WEBHOOK_HTTP_TIMEOUT", "3"))    # 3 seconds
+CERT_HTTP_TIMEOUT = int(os.getenv("WEBHOOK_HTTP_TIMEOUT", "3"))  # 3 seconds
 
 # Certificate cache: URL -> (cert, expiry_time)
-_cert_cache: Dict[str, tuple[x509.Certificate, datetime]] = {}
+_cert_cache: dict[str, tuple[x509.Certificate, datetime]] = {}
 
 
 def validate_cert_url(cert_url: str) -> bool:
@@ -71,7 +70,7 @@ def validate_cert_url(cert_url: str) -> bool:
         return False
 
 
-def fetch_certificate(cert_url: str) -> Optional[x509.Certificate]:
+def fetch_certificate(cert_url: str) -> x509.Certificate | None:
     """Fetch and parse SNS certificate from URL.
 
     Implements caching with TTL to avoid repeated fetches.
@@ -100,10 +99,7 @@ def fetch_certificate(cert_url: str) -> Optional[x509.Certificate]:
         resp.raise_for_status()
 
         # Parse PEM certificate
-        cert = x509.load_pem_x509_certificate(
-            resp.content,
-            default_backend()
-        )
+        cert = x509.load_pem_x509_certificate(resp.content, default_backend())
 
         # Cache it
         expiry = datetime.utcnow() + timedelta(seconds=CERT_CACHE_TTL)
@@ -123,7 +119,7 @@ def fetch_certificate(cert_url: str) -> Optional[x509.Certificate]:
         return None
 
 
-def build_canonical_string(message: Dict[str, Any], message_type: str) -> str:
+def build_canonical_string(message: dict[str, Any], message_type: str) -> str:
     """Build canonical string for signature verification.
 
     Order matters: Message, MessageId, Subject (if present), Timestamp, TopicArn, Type
@@ -161,10 +157,7 @@ def build_canonical_string(message: Dict[str, Any], message_type: str) -> str:
 
 
 def verify_signature(
-    message: Dict[str, Any],
-    signature_b64: str,
-    cert_url: str,
-    message_type: str
+    message: dict[str, Any], signature_b64: str, cert_url: str, message_type: str
 ) -> bool:
     """Verify SNS message signature.
 
@@ -203,10 +196,7 @@ def verify_signature(
 
             # SNS uses SHA1 with RSA (PKCS1v15 padding)
             public_key.verify(
-                signature,
-                canonical.encode('utf-8'),
-                padding.PKCS1v15(),
-                hashes.SHA1()
+                signature, canonical.encode("utf-8"), padding.PKCS1v15(), hashes.SHA1()
             )
 
             logger.info("SNS signature verified successfully")
@@ -222,10 +212,7 @@ def verify_signature(
 
 
 def verify_sns_message(
-    message: Dict[str, Any],
-    signature: str,
-    cert_url: str,
-    signature_version: str = "1"
+    message: dict[str, Any], signature: str, cert_url: str, signature_version: str = "1"
 ) -> bool:
     """Verify SNS message signature (wrapper for webhook use).
 

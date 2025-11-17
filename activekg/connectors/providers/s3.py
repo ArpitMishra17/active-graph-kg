@@ -6,25 +6,25 @@ Dependencies:
   - boto3 (already listed in requirements.txt)
   - pdfplumber / PyPDF2 / python-docx / bs4 for parsing (already present)
 """
+
 from __future__ import annotations
 
-from typing import Optional, List, Tuple
-from datetime import datetime, timezone
 import io
 import os
+from datetime import UTC, datetime
 
 import boto3
-
-from activekg.connectors.base import BaseConnector, ConnectorStats, FetchResult, ChangeItem
-from bs4 import BeautifulSoup
 import pdfplumber
+from bs4 import BeautifulSoup
 from docx import Document as DocxDocument
 
+from activekg.connectors.base import BaseConnector, ChangeItem, ConnectorStats, FetchResult
 
-def _parse_s3_uri(uri: str) -> Tuple[str, str]:
+
+def _parse_s3_uri(uri: str) -> tuple[str, str]:
     if not uri.startswith("s3://"):
         raise ValueError(f"Invalid S3 URI: {uri}")
-    path = uri[len("s3://"):]
+    path = uri[len("s3://") :]
     parts = path.split("/", 1)
     bucket = parts[0]
     key = parts[1] if len(parts) > 1 else ""
@@ -44,7 +44,8 @@ class S3Connector(BaseConnector):
             "s3",
             region_name=config.get("region", os.getenv("AWS_REGION", "us-east-1")),
             aws_access_key_id=config.get("access_key_id") or os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=config.get("secret_access_key") or os.getenv("AWS_SECRET_ACCESS_KEY"),
+            aws_secret_access_key=config.get("secret_access_key")
+            or os.getenv("AWS_SECRET_ACCESS_KEY"),
         )
 
     def stat(self, uri: str) -> ConnectorStats:
@@ -84,15 +85,18 @@ class S3Connector(BaseConnector):
             title=title,
             metadata={
                 "etag": obj.get("ETag", "").strip('"'),
-                "modified_at": (obj.get("LastModified").astimezone(timezone.utc).isoformat()
-                                 if isinstance(obj.get("LastModified"), datetime) else None),
+                "modified_at": (
+                    obj.get("LastModified").astimezone(UTC).isoformat()
+                    if isinstance(obj.get("LastModified"), datetime)
+                    else None
+                ),
                 "bucket": bucket,
                 "key": key,
                 "mime_type": content_type,
-            }
+            },
         )
 
-    def list_changes(self, cursor: Optional[str] = None) -> tuple[List[ChangeItem], Optional[str]]:
+    def list_changes(self, cursor: str | None = None) -> tuple[list[ChangeItem], str | None]:
         """Backfill listing using ListObjectsV2.
 
         Cursor format: JSON string with {"ContinuationToken": "..."} or None
@@ -112,7 +116,7 @@ class S3Connector(BaseConnector):
                 pass
 
         resp = self.s3.list_objects_v2(**kwargs)
-        changes: List[ChangeItem] = []
+        changes: list[ChangeItem] = []
         for obj in resp.get("Contents", []):
             key = obj.get("Key")
             if not key or key.endswith("/"):
@@ -133,7 +137,11 @@ class S3Connector(BaseConnector):
         ct = (content_type or "").lower()
         if "pdf" in ct:
             return self._pdf_to_text(data)
-        if "word" in ct or ct.endswith("/msword") or ct.endswith("/vnd.openxmlformats-officedocument.wordprocessingml.document"):
+        if (
+            "word" in ct
+            or ct.endswith("/msword")
+            or ct.endswith("/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        ):
             return self._docx_to_text(data)
         if "html" in ct or "text/html" in ct:
             return self._html_to_text(data)
@@ -165,4 +173,3 @@ class S3Connector(BaseConnector):
             tag.decompose()
         text = soup.get_text(" ")
         return " ".join(text.split())
-

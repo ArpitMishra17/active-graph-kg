@@ -3,12 +3,13 @@ Connector framework for ingesting external content into Active Graph KG.
 
 Supports S3, GCS, Azure Blob, Google Drive, Notion, and ATS systems.
 """
-from .base import BaseConnector, ConnectorStats, FetchResult, ChangeItem
+
+from .base import BaseConnector, ChangeItem, ConnectorStats, FetchResult
 from .chunker import chunk_text, create_chunk_nodes
-from .schemas import S3ConnectorConfig, GCSConnectorConfig, AzureBlobConnectorConfig, ConnectorQuota
-from .throttle import IngestionThrottle
-from .retry import with_retry_and_dlq, TransientError, PermanentError, inspect_dlq, clear_dlq
 from .providers.s3 import S3Connector
+from .retry import PermanentError, TransientError, clear_dlq, inspect_dlq, with_retry_and_dlq
+from .schemas import AzureBlobConnectorConfig, ConnectorQuota, GCSConnectorConfig, S3ConnectorConfig
+from .throttle import IngestionThrottle
 
 __all__ = [
     "BaseConnector",

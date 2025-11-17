@@ -308,6 +308,7 @@ def set_retrieval_uplift(mode: str, value_percent: float) -> None:
     """Set MRR uplift gauge for a retrieval mode (e.g., hybrid, weighted)."""
     retrieval_uplift_mrr_percent.labels(mode=mode).set(float(value_percent))
 
+
 # Index build timing
 vector_index_build_seconds = Histogram(
     "activekg_vector_index_build_seconds",

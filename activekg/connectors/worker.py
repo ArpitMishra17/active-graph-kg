@@ -3,46 +3,44 @@
 Polls Redis queue for change events and processes them via IngestionProcessor.
 Supports graceful shutdown and observability.
 """
+
 from __future__ import annotations
 
 import json
 import logging
-import time
 import signal
 import sys
-from typing import Optional, Dict, Any
+import time
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 import redis
+from prometheus_client import Counter, Gauge, Histogram
 
 from activekg.connectors.base import ChangeItem
 from activekg.connectors.ingest import IngestionProcessor
 from activekg.connectors.providers.s3 import S3Connector
 from activekg.graph.repository import GraphRepository
-from prometheus_client import Counter, Gauge, Histogram
+
+if TYPE_CHECKING:
+    from activekg.connectors.config_store import ConnectorConfigStore
 
 logger = logging.getLogger(__name__)
 
 # Prometheus metrics
 worker_processed = Counter(
-    'connector_worker_processed_total',
-    'Total events processed by worker',
-    ['tenant', 'provider', 'result']
+    "connector_worker_processed_total",
+    "Total events processed by worker",
+    ["tenant", "provider", "result"],
 )
 worker_errors = Counter(
-    'connector_worker_errors_total',
-    'Total worker errors',
-    ['tenant', 'provider', 'error_type']
+    "connector_worker_errors_total", "Total worker errors", ["tenant", "provider", "error_type"]
 )
 worker_queue_depth = Gauge(
-    'connector_worker_queue_depth',
-    'Current queue depth per tenant',
-    ['tenant', 'provider']
+    "connector_worker_queue_depth", "Current queue depth per tenant", ["tenant", "provider"]
 )
 worker_batch_latency = Histogram(
-    'connector_worker_batch_latency_seconds',
-    'Time to process one batch',
-    ['tenant', 'provider']
+    "connector_worker_batch_latency_seconds", "Time to process one batch", ["tenant", "provider"]
 )
 
 
@@ -53,9 +51,9 @@ class ConnectorWorker:
         self,
         redis_client: redis.Redis,
         repo: GraphRepository,
-        config_store: Optional['ConnectorConfigStore'] = None,
+        config_store: ConnectorConfigStore | None = None,
         batch_size: int = 10,
-        poll_interval_seconds: float = 1.0
+        poll_interval_seconds: float = 1.0,
     ):
         """Initialize worker.
 
@@ -79,7 +77,9 @@ class ConnectorWorker:
         # Config store (lazy-loaded if not provided)
         self._config_store = config_store
 
-        logger.info(f"Worker initialized: batch_size={batch_size}, poll_interval={poll_interval_seconds}s")
+        logger.info(
+            f"Worker initialized: batch_size={batch_size}, poll_interval={poll_interval_seconds}s"
+        )
 
     def _shutdown_handler(self, signum, frame):
         """Handle shutdown signals."""
@@ -91,10 +91,11 @@ class ConnectorWorker:
         """Get config store (lazy-loaded)."""
         if self._config_store is None:
             from activekg.connectors.config_store import get_config_store
+
             self._config_store = get_config_store()
         return self._config_store
 
-    def load_s3_config(self, tenant_id: str) -> Optional[Dict[str, Any]]:
+    def load_s3_config(self, tenant_id: str) -> dict[str, Any] | None:
         """Load S3 connector config for tenant from database.
 
         Uses config store with automatic caching.
@@ -145,7 +146,9 @@ class ConnectorWorker:
                         batch.append(json.loads(item_json))
                     except Exception as e:
                         logger.error(f"Failed to parse queue item: {e}")
-                        worker_errors.labels(tenant=tenant_id, provider=provider, error_type="parse").inc()
+                        worker_errors.labels(
+                            tenant=tenant_id, provider=provider, error_type="parse"
+                        ).inc()
 
             if not batch:
                 return 0
@@ -156,30 +159,36 @@ class ConnectorWorker:
             config = self.load_s3_config(tenant_id)
             if not config:
                 logger.error(f"No S3 config found for tenant {tenant_id}")
-                worker_errors.labels(tenant=tenant_id, provider=provider, error_type="no_config").inc()
+                worker_errors.labels(
+                    tenant=tenant_id, provider=provider, error_type="no_config"
+                ).inc()
                 return 0
 
             # Create connector + processor
             connector = S3Connector(tenant_id=tenant_id, config=config)
             processor = IngestionProcessor(
-                connector=connector,
-                repo=self.repo,
-                redis_client=self.redis_client
+                connector=connector, repo=self.repo, redis_client=self.redis_client
             )
 
             # Convert to ChangeItems
             changes = []
             for item in batch:
                 try:
-                    changes.append(ChangeItem(
-                        uri=item["uri"],
-                        operation=item.get("operation", "upsert"),
-                        etag=item.get("etag"),
-                        modified_at=datetime.fromisoformat(item["modified_at"]) if item.get("modified_at") else None
-                    ))
+                    changes.append(
+                        ChangeItem(
+                            uri=item["uri"],
+                            operation=item.get("operation", "upsert"),
+                            etag=item.get("etag"),
+                            modified_at=datetime.fromisoformat(item["modified_at"])
+                            if item.get("modified_at")
+                            else None,
+                        )
+                    )
                 except Exception as e:
                     logger.error(f"Failed to create ChangeItem: {e}")
-                    worker_errors.labels(tenant=tenant_id, provider=provider, error_type="change_item").inc()
+                    worker_errors.labels(
+                        tenant=tenant_id, provider=provider, error_type="change_item"
+                    ).inc()
 
             # Process batch
             try:
@@ -190,15 +199,21 @@ class ConnectorWorker:
                 for result_type in ["created", "updated", "skipped", "deleted"]:
                     count = summary.get(result_type, 0)
                     if count > 0:
-                        worker_processed.labels(tenant=tenant_id, provider=provider, result=result_type).inc(count)
+                        worker_processed.labels(
+                            tenant=tenant_id, provider=provider, result=result_type
+                        ).inc(count)
 
                 if summary.get("errors", 0) > 0:
-                    worker_errors.labels(tenant=tenant_id, provider=provider, error_type="processing").inc(summary["errors"])
+                    worker_errors.labels(
+                        tenant=tenant_id, provider=provider, error_type="processing"
+                    ).inc(summary["errors"])
 
                 return len(batch)
             except Exception as e:
                 logger.error(f"Batch processing failed: {e}", exc_info=True)
-                worker_errors.labels(tenant=tenant_id, provider=provider, error_type="batch_failure").inc()
+                worker_errors.labels(
+                    tenant=tenant_id, provider=provider, error_type="batch_failure"
+                ).inc()
                 return 0
 
     def run(self):
@@ -216,14 +231,12 @@ class ConnectorWorker:
                 tenant_queues = set()
                 while True:
                     cursor, keys = self.redis_client.scan(
-                        cursor=cursor,
-                        match="connector:s3:*:queue",
-                        count=100
+                        cursor=cursor, match="connector:s3:*:queue", count=100
                     )
                     for key in keys:
                         # Extract tenant_id from key
                         # Format: connector:s3:{tenant_id}:queue
-                        parts = key.decode('utf-8').split(':')
+                        parts = key.decode("utf-8").split(":")
                         if len(parts) == 4:
                             tenant_queues.add(parts[2])
                     if cursor == 0:
@@ -256,13 +269,13 @@ def start_worker():
         python -m activekg.connectors.worker
     """
     import os
+
     from activekg.common.metrics import get_redis_client
     from activekg.graph.repository import GraphRepository
 
     # Setup logging
     logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Get dependencies
@@ -279,7 +292,7 @@ def start_worker():
         redis_client=redis_client,
         repo=repo,
         batch_size=int(os.getenv("CONNECTOR_WORKER_BATCH_SIZE", "10")),
-        poll_interval_seconds=float(os.getenv("CONNECTOR_WORKER_POLL_INTERVAL", "1.0"))
+        poll_interval_seconds=float(os.getenv("CONNECTOR_WORKER_POLL_INTERVAL", "1.0")),
     )
 
     worker.run()

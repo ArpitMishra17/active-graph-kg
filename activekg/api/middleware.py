@@ -14,9 +14,9 @@ from functools import wraps
 from fastapi import Depends, HTTPException, Request, Response
 
 from activekg.api.auth import JWT_ENABLED, JWTClaims, get_jwt_claims
-from activekg.observability.metrics import access_violations_total
 from activekg.api.rate_limiter import RATE_LIMIT_ENABLED, get_identifier, rate_limiter
 from activekg.common.logger import get_enhanced_logger
+from activekg.observability.metrics import access_violations_total
 
 logger = get_enhanced_logger(__name__)
 

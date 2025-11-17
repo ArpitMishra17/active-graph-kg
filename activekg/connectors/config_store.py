@@ -7,17 +7,18 @@ Provides:
 - Enable/disable per tenant
 - Redis pub/sub for multi-worker cache invalidation
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import os
-from typing import Dict, Any, Optional, List
 from datetime import datetime
+from typing import Any
 
 import psycopg
-from psycopg.rows import dict_row
 from prometheus_client import Counter
+from psycopg.rows import dict_row
 
 from activekg.connectors.encryption import get_encryption, sanitize_config_for_logging
 
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Redis pub/sub (optional - graceful degradation if not available)
 try:
     import redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -33,44 +35,38 @@ except ImportError:
 
 # Prometheus metrics
 connector_config_cache_hits_total = Counter(
-    'connector_config_cache_hits_total',
-    'Total connector config cache hits',
-    ['provider']
+    "connector_config_cache_hits_total", "Total connector config cache hits", ["provider"]
 )
 connector_config_cache_misses_total = Counter(
-    'connector_config_cache_misses_total',
-    'Total connector config cache misses',
-    ['provider']
+    "connector_config_cache_misses_total", "Total connector config cache misses", ["provider"]
 )
 connector_config_decrypt_failures_total = Counter(
-    'connector_config_decrypt_failures_total',
-    'Total connector config decryption failures',
-    ['provider', 'field']
+    "connector_config_decrypt_failures_total",
+    "Total connector config decryption failures",
+    ["provider", "field"],
 )
 connector_config_invalidate_total = Counter(
-    'connector_config_invalidate_total',
-    'Total connector config cache invalidations published',
-    ['operation']  # upsert, delete, enable
+    "connector_config_invalidate_total",
+    "Total connector config cache invalidations published",
+    ["operation"],  # upsert, delete, enable
 )
 connector_pubsub_publish_failures_total = Counter(
-    'connector_pubsub_publish_failures_total',
-    'Total Redis pub/sub publish failures'
+    "connector_pubsub_publish_failures_total", "Total Redis pub/sub publish failures"
 )
 connector_rotation_total = Counter(
-    'connector_rotation_total',
-    'Total connector config key rotations',
-    ['result']  # rotated, skipped, error
+    "connector_rotation_total",
+    "Total connector config key rotations",
+    ["result"],  # rotated, skipped, error
 )
 connector_rotation_batch_latency_seconds = Counter(
-    'connector_rotation_batch_latency_seconds',
-    'Total latency for key rotation batches in seconds'
+    "connector_rotation_batch_latency_seconds", "Total latency for key rotation batches in seconds"
 )
 
 
 class ConnectorConfigStore:
     """Database store for connector configurations with encryption."""
 
-    def __init__(self, dsn: str, cache_ttl_seconds: int = 300, redis_url: Optional[str] = None):
+    def __init__(self, dsn: str, cache_ttl_seconds: int = 300, redis_url: str | None = None):
         """Initialize config store.
 
         Args:
@@ -83,7 +79,7 @@ class ConnectorConfigStore:
         self.encryption = get_encryption()
 
         # In-memory cache: (tenant_id, provider) -> (config, timestamp)
-        self._cache: Dict[tuple, tuple[Dict[str, Any], datetime]] = {}
+        self._cache: dict[tuple, tuple[dict[str, Any], datetime]] = {}
 
         # Redis pub/sub for multi-worker cache invalidation (optional)
         self.redis_client = None
@@ -104,7 +100,7 @@ class ConnectorConfigStore:
         """
         return psycopg.connect(self.dsn, row_factory=dict_row)
 
-    def _is_cache_valid(self, cache_entry: tuple[Dict[str, Any], datetime]) -> bool:
+    def _is_cache_valid(self, cache_entry: tuple[dict[str, Any], datetime]) -> bool:
         """Check if cache entry is still valid.
 
         Args:
@@ -130,11 +126,9 @@ class ConnectorConfigStore:
             return
 
         try:
-            message = json.dumps({
-                "tenant_id": tenant_id,
-                "provider": provider,
-                "operation": operation
-            })
+            message = json.dumps(
+                {"tenant_id": tenant_id, "provider": provider, "operation": operation}
+            )
             self.redis_client.publish("connector:config:changed", message)
             connector_config_invalidate_total.labels(operation=operation).inc()
             logger.debug(f"Published cache invalidation: {tenant_id}/{provider} (op={operation})")
@@ -142,7 +136,7 @@ class ConnectorConfigStore:
             connector_pubsub_publish_failures_total.inc()
             logger.warning(f"Failed to publish cache invalidation: {e}")
 
-    def get(self, tenant_id: str, provider: str = "s3") -> Optional[Dict[str, Any]]:
+    def get(self, tenant_id: str, provider: str = "s3") -> dict[str, Any] | None:
         """Get connector config for tenant.
 
         Checks cache first, falls back to DB.
@@ -181,7 +175,7 @@ class ConnectorConfigStore:
                         FROM connector_configs
                         WHERE tenant_id = %s AND provider = %s
                         """,
-                        (tenant_id, provider)
+                        (tenant_id, provider),
                     )
                     row = cur.fetchone()
 
@@ -196,7 +190,9 @@ class ConnectorConfigStore:
                     # Decrypt secrets using stored key_version (fallback to all KEKs if None)
                     encrypted_config = row["config_json"]
                     key_version = row.get("key_version")
-                    decrypted_config = self.encryption.decrypt_config(encrypted_config, key_version=key_version)
+                    decrypted_config = self.encryption.decrypt_config(
+                        encrypted_config, key_version=key_version
+                    )
 
                     # Cache it
                     self._cache[cache_key] = (decrypted_config, datetime.utcnow())
@@ -209,11 +205,7 @@ class ConnectorConfigStore:
             return None
 
     def upsert(
-        self,
-        tenant_id: str,
-        provider: str,
-        config: Dict[str, Any],
-        enabled: bool = True
+        self, tenant_id: str, provider: str, config: dict[str, Any], enabled: bool = True
     ) -> bool:
         """Insert or update connector config.
 
@@ -246,7 +238,13 @@ class ConnectorConfigStore:
                             key_version = EXCLUDED.key_version,
                             updated_at = NOW()
                         """,
-                        (tenant_id, provider, json.dumps(encrypted_config), enabled, active_key_version)
+                        (
+                            tenant_id,
+                            provider,
+                            json.dumps(encrypted_config),
+                            enabled,
+                            active_key_version,
+                        ),
                     )
                     conn.commit()
 
@@ -286,7 +284,7 @@ class ConnectorConfigStore:
                         SET enabled = %s, updated_at = NOW()
                         WHERE tenant_id = %s AND provider = %s
                         """,
-                        (enabled, tenant_id, provider)
+                        (enabled, tenant_id, provider),
                     )
                     updated = cur.rowcount > 0
                     conn.commit()
@@ -300,7 +298,9 @@ class ConnectorConfigStore:
                 # Publish invalidation message
                 self._publish_invalidation(tenant_id, provider, "enable")
 
-                logger.info(f"Config {'enabled' if enabled else 'disabled'}: {tenant_id}/{provider}")
+                logger.info(
+                    f"Config {'enabled' if enabled else 'disabled'}: {tenant_id}/{provider}"
+                )
             else:
                 logger.warning(f"Config not found for enable/disable: {tenant_id}/{provider}")
 
@@ -310,7 +310,7 @@ class ConnectorConfigStore:
             logger.error(f"Failed to set enabled: {e}")
             return False
 
-    def list_all(self, provider: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_all(self, provider: str | None = None) -> list[dict[str, Any]]:
         """List all connector configs.
 
         Does NOT decrypt secrets. Returns metadata only.
@@ -332,7 +332,7 @@ class ConnectorConfigStore:
                             WHERE provider = %s
                             ORDER BY tenant_id
                             """,
-                            (provider,)
+                            (provider,),
                         )
                     else:
                         cur.execute(
@@ -377,7 +377,7 @@ class ConnectorConfigStore:
                         DELETE FROM connector_configs
                         WHERE tenant_id = %s AND provider = %s
                         """,
-                        (tenant_id, provider)
+                        (tenant_id, provider),
                     )
                     deleted = cur.rowcount > 0
                     conn.commit()
@@ -403,11 +403,11 @@ class ConnectorConfigStore:
 
     def rotate_keys(
         self,
-        providers: Optional[List[str]] = None,
-        tenants: Optional[List[str]] = None,
+        providers: list[str] | None = None,
+        tenants: list[str] | None = None,
         batch_size: int = 100,
-        dry_run: bool = False
-    ) -> Dict[str, Any]:
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
         """Rotate encryption keys for connector configs.
 
         Selects rows where key_version != ACTIVE_VERSION, decrypts with old key,
@@ -423,6 +423,7 @@ class ConnectorConfigStore:
             Summary dict with counts: {rotated, skipped, errors, dry_run}
         """
         import time
+
         start_time = time.time()
 
         rotated = 0
@@ -438,15 +439,15 @@ class ConnectorConfigStore:
                 FROM connector_configs
                 WHERE key_version IS NULL OR key_version != %s
             """
-            params: List[Any] = [active_version]
+            params: list[Any] = [active_version]
 
             if providers:
-                placeholders = ','.join(['%s'] * len(providers))
+                placeholders = ",".join(["%s"] * len(providers))
                 query += f" AND provider IN ({placeholders})"
                 params.extend(providers)
 
             if tenants:
-                placeholders = ','.join(['%s'] * len(tenants))
+                placeholders = ",".join(["%s"] * len(tenants))
                 query += f" AND tenant_id IN ({placeholders})"
                 params.extend(tenants)
 
@@ -465,7 +466,7 @@ class ConnectorConfigStore:
                             "skipped": 0,
                             "errors": 0,
                             "candidates": len(rows),
-                            "dry_run": True
+                            "dry_run": True,
                         }
 
                     # Process each row
@@ -478,8 +479,7 @@ class ConnectorConfigStore:
                         try:
                             # Decrypt with old key (fallback allowed)
                             decrypted_config = self.encryption.decrypt_config(
-                                encrypted_config,
-                                key_version=old_key_version
+                                encrypted_config, key_version=old_key_version
                             )
 
                             # Re-encrypt with active key
@@ -492,7 +492,12 @@ class ConnectorConfigStore:
                                 SET config_json = %s, key_version = %s, updated_at = NOW()
                                 WHERE tenant_id = %s AND provider = %s
                                 """,
-                                (json.dumps(re_encrypted_config), active_version, tenant_id, provider)
+                                (
+                                    json.dumps(re_encrypted_config),
+                                    active_version,
+                                    tenant_id,
+                                    provider,
+                                ),
                             )
 
                             # Invalidate cache
@@ -505,7 +510,9 @@ class ConnectorConfigStore:
 
                             rotated += 1
                             connector_rotation_total.labels(result="rotated").inc()
-                            logger.info(f"Key rotated: {tenant_id}/{provider} (v{old_key_version} -> v{active_version})")
+                            logger.info(
+                                f"Key rotated: {tenant_id}/{provider} (v{old_key_version} -> v{active_version})"
+                            )
 
                         except Exception as e:
                             errors += 1
@@ -518,14 +525,11 @@ class ConnectorConfigStore:
             elapsed = time.time() - start_time
             connector_rotation_batch_latency_seconds.inc(elapsed)
 
-            logger.info(f"Key rotation complete: {rotated} rotated, {skipped} skipped, {errors} errors ({elapsed:.2f}s)")
+            logger.info(
+                f"Key rotation complete: {rotated} rotated, {skipped} skipped, {errors} errors ({elapsed:.2f}s)"
+            )
 
-            return {
-                "rotated": rotated,
-                "skipped": skipped,
-                "errors": errors,
-                "dry_run": False
-            }
+            return {"rotated": rotated, "skipped": skipped, "errors": errors, "dry_run": False}
 
         except Exception as e:
             logger.error(f"Key rotation batch failed: {e}")
@@ -534,7 +538,7 @@ class ConnectorConfigStore:
                 "skipped": skipped,
                 "errors": errors + 1,
                 "dry_run": False,
-                "error": str(e)
+                "error": str(e),
             }
 
 
@@ -542,7 +546,7 @@ class ConnectorConfigStore:
 _config_store: ConnectorConfigStore | None = None
 
 
-def get_config_store(dsn: Optional[str] = None, redis_url: Optional[str] = None) -> ConnectorConfigStore:
+def get_config_store(dsn: str | None = None, redis_url: str | None = None) -> ConnectorConfigStore:
     """Get global config store instance.
 
     Args:

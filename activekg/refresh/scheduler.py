@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
+from time import time as _now
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from prometheus_client import Counter, Histogram
-from time import time as _now
+
+from activekg.common.logger import get_enhanced_logger
 from activekg.observability.metrics import (
-    track_schedule_run,
     track_node_refresh_latency,
     track_nodes_refreshed,
     track_refresh_cycle_nodes,
+    track_schedule_run,
 )
-
-from activekg.common.logger import get_enhanced_logger
 
 # Prometheus metrics for Drive poller
 connector_poller_runs_total = Counter(
@@ -86,7 +86,9 @@ class RefreshScheduler:
         last = self._last_times.get("refresh_cycle")
         try:
             if last is not None:
-                track_schedule_run("refresh_cycle", kind="interval", inter_run_s=max(0.0, now_ts - last))
+                track_schedule_run(
+                    "refresh_cycle", kind="interval", inter_run_s=max(0.0, now_ts - last)
+                )
             else:
                 track_schedule_run("refresh_cycle", kind="interval", inter_run_s=None)
         except Exception:
@@ -189,7 +191,9 @@ class RefreshScheduler:
             last = self._last_times.get("trigger_cycle")
             try:
                 if last is not None:
-                    track_schedule_run("trigger_cycle", kind="interval", inter_run_s=max(0.0, now_ts - last))
+                    track_schedule_run(
+                        "trigger_cycle", kind="interval", inter_run_s=max(0.0, now_ts - last)
+                    )
                 else:
                     track_schedule_run("trigger_cycle", kind="interval", inter_run_s=None)
             except Exception:
@@ -209,7 +213,9 @@ class RefreshScheduler:
             last = self._last_times.get("purge_deleted_cycle")
             try:
                 if last is not None:
-                    track_schedule_run("purge_deleted_cycle", kind="cron", inter_run_s=max(0.0, now_ts - last))
+                    track_schedule_run(
+                        "purge_deleted_cycle", kind="cron", inter_run_s=max(0.0, now_ts - last)
+                    )
                 else:
                     track_schedule_run("purge_deleted_cycle", kind="cron", inter_run_s=None)
             except Exception:
@@ -250,7 +256,9 @@ class RefreshScheduler:
             last = self._last_times.get("drive_poller")
             try:
                 if last is not None:
-                    track_schedule_run("drive_poller", kind="interval", inter_run_s=max(0.0, now_ts - last))
+                    track_schedule_run(
+                        "drive_poller", kind="interval", inter_run_s=max(0.0, now_ts - last)
+                    )
                 else:
                     track_schedule_run("drive_poller", kind="interval", inter_run_s=None)
             except Exception:

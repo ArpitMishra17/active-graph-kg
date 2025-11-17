@@ -9,8 +9,9 @@ Tests:
 5. Test provider/tenant filtering
 6. Verify metrics tracking
 """
+
 import os
-import json
+
 import requests
 from cryptography.fernet import Fernet
 
@@ -36,6 +37,7 @@ os.environ["RUN_SCHEDULER"] = "false"
 print("\n=== Test 1: Module imports ===")
 try:
     from activekg.connectors.config_store import get_config_store
+
     print("✓ Modules imported successfully")
 except Exception as e:
     print(f"✗ Import failed: {e}")
@@ -48,10 +50,30 @@ try:
 
     # Create configs for different tenants and providers
     configs = [
-        ("tenant_rotation_1", "s3", {"endpoint": "https://s3.amazonaws.com", "access_key": "key1", "secret_key": "secret1"}),
-        ("tenant_rotation_1", "gcs", {"endpoint": "https://storage.googleapis.com", "access_key": "key2", "secret_key": "secret2"}),
-        ("tenant_rotation_2", "s3", {"endpoint": "https://s3.amazonaws.com", "access_key": "key3", "secret_key": "secret3"}),
-        ("tenant_rotation_3", "s3", {"endpoint": "https://s3.amazonaws.com", "access_key": "key4", "secret_key": "secret4"}),
+        (
+            "tenant_rotation_1",
+            "s3",
+            {"endpoint": "https://s3.amazonaws.com", "access_key": "key1", "secret_key": "secret1"},
+        ),
+        (
+            "tenant_rotation_1",
+            "gcs",
+            {
+                "endpoint": "https://storage.googleapis.com",
+                "access_key": "key2",
+                "secret_key": "secret2",
+            },
+        ),
+        (
+            "tenant_rotation_2",
+            "s3",
+            {"endpoint": "https://s3.amazonaws.com", "access_key": "key3", "secret_key": "secret3"},
+        ),
+        (
+            "tenant_rotation_3",
+            "s3",
+            {"endpoint": "https://s3.amazonaws.com", "access_key": "key4", "secret_key": "secret4"},
+        ),
     ]
 
     for tenant_id, provider, config in configs:
@@ -73,8 +95,7 @@ except Exception as e:
 print("\n=== Test 3: Dry-run rotation (V1 active) ===")
 try:
     response = requests.post(
-        "http://localhost:8000/_admin/connectors/rotate_keys",
-        json={"dry_run": True}
+        "http://localhost:8000/_admin/connectors/rotate_keys", json={"dry_run": True}
     )
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -84,7 +105,7 @@ try:
     assert result["rotated"] == 0, "Expected 0 rotations in dry-run"
     assert result["candidates"] == 0, "Expected 0 candidates when active version matches"
 
-    print(f"✓ Dry-run completed")
+    print("✓ Dry-run completed")
     print(f"  Candidates: {result.get('candidates', 0)} (expected 0 since all are V1)")
 
 except Exception as e:
@@ -98,8 +119,9 @@ try:
     os.environ["CONNECTOR_KEK_ACTIVE_VERSION"] = "2"
 
     # Re-initialize store to pick up new active version
-    from activekg.connectors.config_store import _config_store
-    _config_store = None  # Clear singleton
+    import activekg.connectors.config_store as config_module
+
+    config_module._config_store = None  # Clear singleton
     store = get_config_store()
 
     print(f"  Active KEK version: {store.encryption.active_version}")
@@ -107,8 +129,7 @@ try:
 
     # Dry-run should now find candidates
     response = requests.post(
-        "http://localhost:8000/_admin/connectors/rotate_keys",
-        json={"dry_run": True}
+        "http://localhost:8000/_admin/connectors/rotate_keys", json={"dry_run": True}
     )
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -118,7 +139,7 @@ try:
     assert result["rotated"] == 0, "Expected 0 rotations in dry-run"
     assert result["candidates"] == 4, f"Expected 4 candidates, got {result['candidates']}"
 
-    print(f"✓ Dry-run with V2 active")
+    print("✓ Dry-run with V2 active")
     print(f"  Candidates: {result['candidates']} (expected 4)")
 
 except Exception as e:
@@ -129,8 +150,7 @@ except Exception as e:
 print("\n=== Test 5: Actual rotation (V1 → V2) ===")
 try:
     response = requests.post(
-        "http://localhost:8000/_admin/connectors/rotate_keys",
-        json={"dry_run": False}
+        "http://localhost:8000/_admin/connectors/rotate_keys", json={"dry_run": False}
     )
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -140,7 +160,7 @@ try:
     assert result["rotated"] == 4, f"Expected 4 rotations, got {result['rotated']}"
     assert result["errors"] == 0, f"Expected 0 errors, got {result['errors']}"
 
-    print(f"✓ Rotation completed")
+    print("✓ Rotation completed")
     print(f"  Rotated: {result['rotated']}")
     print(f"  Errors: {result['errors']}")
 
@@ -155,8 +175,9 @@ try:
     for tenant_id, provider, expected_config in configs:
         loaded_config = store.get(tenant_id, provider)
         assert loaded_config is not None, f"Failed to load {tenant_id}/{provider}"
-        assert loaded_config["access_key"] == expected_config["access_key"], \
+        assert loaded_config["access_key"] == expected_config["access_key"], (
             f"Decryption failed for {tenant_id}/{provider}"
+        )
         print(f"  ✓ {tenant_id}/{provider}: Decrypted correctly")
 
     print("✓ All configs decrypt correctly with V2")
@@ -173,11 +194,15 @@ try:
     _config_store = None
     store_v1 = get_config_store()
 
-    store_v1.upsert("tenant_filter_test", "azure", {
-        "endpoint": "https://blob.azure.com",
-        "access_key": "azure_key",
-        "secret_key": "azure_secret"
-    })
+    store_v1.upsert(
+        "tenant_filter_test",
+        "azure",
+        {
+            "endpoint": "https://blob.azure.com",
+            "access_key": "azure_key",
+            "secret_key": "azure_secret",
+        },
+    )
 
     # Switch back to V2
     os.environ["CONNECTOR_KEK_ACTIVE_VERSION"] = "2"
@@ -187,19 +212,21 @@ try:
     # Rotate only s3 provider
     response = requests.post(
         "http://localhost:8000/_admin/connectors/rotate_keys",
-        json={"providers": ["s3"], "dry_run": False}
+        json={"providers": ["s3"], "dry_run": False},
     )
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
     result = response.json()
 
     # Should rotate 0 (all s3 configs already on V2)
-    assert result["rotated"] == 0, f"Expected 0 rotations (s3 already on V2), got {result['rotated']}"
+    assert result["rotated"] == 0, (
+        f"Expected 0 rotations (s3 already on V2), got {result['rotated']}"
+    )
 
     # Now rotate azure
     response = requests.post(
         "http://localhost:8000/_admin/connectors/rotate_keys",
-        json={"providers": ["azure"], "dry_run": False}
+        json={"providers": ["azure"], "dry_run": False},
     )
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -207,7 +234,7 @@ try:
 
     assert result["rotated"] == 1, f"Expected 1 rotation (azure), got {result['rotated']}"
 
-    print(f"✓ Provider filtering works correctly")
+    print("✓ Provider filtering works correctly")
     print(f"  S3 filter: {0} rotated (expected 0, already on V2)")
     print(f"  Azure filter: {1} rotated (expected 1)")
 
@@ -226,11 +253,15 @@ try:
     _config_store = None
     store_v1 = get_config_store()
 
-    store_v1.upsert("tenant_specific_test", "s3", {
-        "endpoint": "https://s3.amazonaws.com",
-        "access_key": "specific_key",
-        "secret_key": "specific_secret"
-    })
+    store_v1.upsert(
+        "tenant_specific_test",
+        "s3",
+        {
+            "endpoint": "https://s3.amazonaws.com",
+            "access_key": "specific_key",
+            "secret_key": "specific_secret",
+        },
+    )
 
     # Switch to V2
     os.environ["CONNECTOR_KEK_ACTIVE_VERSION"] = "2"
@@ -240,7 +271,7 @@ try:
     # Rotate only for specific tenant
     response = requests.post(
         "http://localhost:8000/_admin/connectors/rotate_keys",
-        json={"tenants": ["tenant_specific_test"], "dry_run": False}
+        json={"tenants": ["tenant_specific_test"], "dry_run": False},
     )
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -248,7 +279,7 @@ try:
 
     assert result["rotated"] == 1, f"Expected 1 rotation, got {result['rotated']}"
 
-    print(f"✓ Tenant filtering works correctly")
+    print("✓ Tenant filtering works correctly")
     print(f"  Filtered rotation: {result['rotated']} configs")
 
     # Cleanup

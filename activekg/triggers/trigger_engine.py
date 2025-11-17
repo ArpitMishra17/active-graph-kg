@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from time import time as _now
+
 import numpy as np
 
 from activekg.common.logger import get_enhanced_logger
-from time import time as _now
 from activekg.observability.metrics import track_trigger_fired, track_trigger_run
 
 

@@ -4,7 +4,7 @@ Thanks for your interest in contributing! This project is open‑source and Post
 
 ## Quick Start
 - Fork the repo and create a feature branch
-- Run tests locally: `./verify_phase1_plus.sh && python test_phase1_plus.py`
+- Run tests locally: `./verify_phase1_plus.sh && python tests/test_phase1_plus.py`
 - For API changes, run the server (`uvicorn activekg.api.main:app --reload`) and use the evaluation harness (`evaluation/run_all.sh`)
 
 ## Code Style & Scope
@@ -38,8 +38,7 @@ Thanks for your interest in contributing! This project is open‑source and Post
 
 ## Development Notes
 - DB: PostgreSQL + pgvector 384‑dim vectors; enable via `db/init.sql`
-- Hybrid text search: apply `db/add_text_search.sql`
+- Hybrid text search: apply `db/migrations/add_text_search.sql`
 - LLM Q&A: `/ask` and `/ask/stream`, tune with env: `ASK_SIM_THRESHOLD`, `ASK_MAX_TOKENS`, `ASK_MAX_SNIPPETS`, `ASK_SNIPPET_LEN`, `HYBRID_RERANKER_CANDIDATES`
 
 Happy hacking! 🚀
-
