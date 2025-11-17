@@ -35,6 +35,17 @@ class AzureBlobConnectorConfig(BaseModel):
     enabled: bool = True
 
 
+class DriveConnectorConfig(BaseModel):
+    """Configuration for Google Drive connector."""
+
+    folder_id: str = Field(..., description="Google Drive folder ID to watch")
+    service_account_json_path: str = Field(
+        ..., description="Path to service account JSON credentials"
+    )
+    poll_interval_seconds: int = Field(default=900, ge=60, le=3600)
+    enabled: bool = True
+
+
 class ConnectorQuota(BaseModel):
     """Per-tenant quota limits."""
 

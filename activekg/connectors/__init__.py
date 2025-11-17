@@ -8,7 +8,13 @@ from .base import BaseConnector, ChangeItem, ConnectorStats, FetchResult
 from .chunker import chunk_text, create_chunk_nodes
 from .providers.s3 import S3Connector
 from .retry import PermanentError, TransientError, clear_dlq, inspect_dlq, with_retry_and_dlq
-from .schemas import AzureBlobConnectorConfig, ConnectorQuota, GCSConnectorConfig, S3ConnectorConfig
+from .schemas import (
+    AzureBlobConnectorConfig,
+    ConnectorQuota,
+    DriveConnectorConfig,
+    GCSConnectorConfig,
+    S3ConnectorConfig,
+)
 from .throttle import IngestionThrottle
 
 __all__ = [
@@ -21,6 +27,7 @@ __all__ = [
     "S3ConnectorConfig",
     "GCSConnectorConfig",
     "AzureBlobConnectorConfig",
+    "DriveConnectorConfig",
     "ConnectorQuota",
     "IngestionThrottle",
     "with_retry_and_dlq",
