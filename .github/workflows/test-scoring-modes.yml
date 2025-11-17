@@ -67,8 +67,10 @@ jobs:
           psql -h localhost -U postgres -d activekg -c "CREATE EXTENSION IF NOT EXISTS vector;"
           psql -h localhost -U postgres -d activekg -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
-          # Run schema migrations if needed
-          # python scripts/init_db.py || true
+          # Initialize database schema
+          psql -h localhost -U postgres -d activekg -f db/init.sql
+          psql -h localhost -U postgres -d activekg -f enable_rls_policies.sql
+          psql -h localhost -U postgres -d activekg -f db/migrations/add_text_search.sql || true
 
       - name: Configure RRF mode
         if: matrix.mode == 'rrf'
@@ -104,6 +106,9 @@ jobs:
           echo "AUTO_EMBED_ON_CREATE=true" >> $GITHUB_ENV
           echo "ACTIVEKG_DEV_TENANT=default" >> $GITHUB_ENV
           echo "PYTHONDONTWRITEBYTECODE=1" >> $GITHUB_ENV
+          echo "CONNECTOR_KEK_V1=YAC4_BiOPM5oC5GdeZ4cOucTRgiDTLob6FqSD7rNKdA=" >> $GITHUB_ENV
+          echo "EMBEDDING_BACKEND=sentence-transformers" >> $GITHUB_ENV
+          echo "EMBEDDING_MODEL=all-MiniLM-L6-v2" >> $GITHUB_ENV
 
       - name: Start API server
         run: |
