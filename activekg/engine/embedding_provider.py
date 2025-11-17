@@ -29,7 +29,8 @@ class EmbeddingProvider:
                 from sentence_transformers import SentenceTransformer
             except Exception as e:
                 raise ImportError("sentence-transformers not installed") from e
-            self._model = SentenceTransformer(self.model_name)
+            # Explicitly set device='cpu' to avoid meta tensor issues in CI
+            self._model = SentenceTransformer(self.model_name, device="cpu")
         elif self.backend == "ollama":
             try:
                 import ollama  # type: ignore
