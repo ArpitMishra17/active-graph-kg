@@ -10,6 +10,7 @@ import os
 
 import psycopg
 from psycopg.rows import dict_row
+from activekg.connectors.types import ConnectorProvider
 
 
 def _get_dsn() -> str:
@@ -20,7 +21,7 @@ def _get_dsn() -> str:
     return dsn
 
 
-def get_cursor(tenant_id: str, provider: str) -> str | None:
+def get_cursor(tenant_id: str, provider: ConnectorProvider) -> str | None:
     """Fetch stored cursor for tenant/provider."""
     dsn = _get_dsn()
     with psycopg.connect(dsn, row_factory=dict_row) as conn:
@@ -37,7 +38,7 @@ def get_cursor(tenant_id: str, provider: str) -> str | None:
             return row["cursor"] if row else None
 
 
-def set_cursor(tenant_id: str, provider: str, cursor: str) -> None:
+def set_cursor(tenant_id: str, provider: ConnectorProvider, cursor: str) -> None:
     """Upsert cursor for tenant/provider."""
     dsn = _get_dsn()
     with psycopg.connect(dsn, row_factory=dict_row) as conn:

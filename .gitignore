@@ -62,3 +62,53 @@ archive/
 # Reports (keep markdown docs, exclude generated reports)
 readiness_report.txt
 quick_validation_report.txt
+
+# Development notes and summaries (local only)
+*_SUMMARY.md
+*_COMPLETE.md
+*_REPORT.md
+*_PLAN.md
+*_STATUS.md
+*_GUIDE.md
+*_IMPLEMENTATION.md
+*_VALIDATION.md
+*_FIXES.md
+*_TODO.md
+*_IMPROVEMENTS.md
+*_RESPONSE.md
+*_COMPARISON.md
+BUGFIX_SUMMARY.md
+DEFENSE_STRATEGY.md
+EVIDENCE.md
+FUTURE_IMPROVEMENTS.md
+GOTCHAS.md
+INTEGRATION_EXAMPLE.md
+INTEGRATION_GOTCHAS.md
+MKDOCS_SETUP.md
+POLISH_RECOMMENDATIONS.md
+ROADMAP.md
+RUFF_*.md
+SIMILAR_PAPERS_ANALYSIS.md
+STATUS.md
+TODO.md
+TUNING_PRESETS.md
+WEBSITE_ONEPAGER_CONTENT.md
+RUNBOOK.md
+BACKEND_READY_FOR_UI.md
+CONNECTOR_IMPLEMENTATION_DAY1.md
+SESSION_SUMMARY_*.md
+*_V2.md
+evaluation/SUMMARY.md
+evaluation/*_REPORT.md
+evaluation/*_COMPARISON.md
+evaluation/REPORT_TEMPLATE.md
+
+# Generated scripts (local testing)
+generate_ui_jwt.py
+evaluation/datasets/generate_ground_truth.py
+scripts/test_jwt_rate_limit.sh
+scripts/test_prometheus_integration.sh
+verify_phase1_plus.sh
+
+# Pre-commit config (optional)
+.pre-commit-config.yaml

@@ -13,6 +13,7 @@ import sys
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from activekg.connectors.types import ConnectorProvider
 
 import redis
 from prometheus_client import Counter, Gauge, Histogram
@@ -117,7 +118,7 @@ class ConnectorWorker:
             logger.error(f"Failed to load S3 config for {tenant_id}: {e}")
             return None
 
-    def process_batch(self, tenant_id: str, provider: str = "s3") -> int:
+    def process_batch(self, tenant_id: str, provider: ConnectorProvider = "s3") -> int:
         """Process one batch of events for tenant.
 
         Args:
