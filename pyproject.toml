@@ -50,6 +50,8 @@ ignore = [
     "E501",  # Line too long (handled by formatter)
     "B904",  # raise-without-from-inside-except (too noisy for prototype code)
     "UP017", # Use datetime.UTC alias (Python 3.11+ only, we support 3.10+)
+    "UP035", # Import from typing_extensions for Python 3.10 compat (NotRequired)
+    "UP036", # Version block needed for Python 3.10/3.11 compat testing
 ]
 
 # Allow fix for all enabled rules when using --fix
