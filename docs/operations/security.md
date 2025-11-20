@@ -24,11 +24,12 @@ Active Graph KG implements comprehensive security features for multi-tenant SaaS
 2. [Multi-Tenancy & RLS](#multi-tenancy-rls)
 3. [Rate Limiting](#rate-limiting)
 4. [Payload Loaders](#payload-loaders-security)
-5. [PII Handling](#pii-handling)
-6. [Audit Trail](#audit-trail)
-7. [API Security](#api-security)
-8. [Deployment Checklist](#deployment-checklist)
-9. [Testing & Verification](#testing-verification)
+5. [Security Limits Configuration](#security-limits-configuration)
+6. [PII Handling](#pii-handling)
+7. [Audit Trail](#audit-trail)
+8. [API Security](#api-security)
+9. [Deployment Checklist](#deployment-checklist)
+10. [Testing & Verification](#testing-verification)
 
 ---
 
@@ -405,6 +406,147 @@ def _load_from_s3(self, s3_uri: str) -> str:
     # Download
     obj = s3_client.get_object(Bucket=bucket, Key=key)
     return obj['Body'].read().decode('utf-8')
+```
+
+---
+
+## Security Limits Configuration
+
+Active Graph KG implements comprehensive security limits to protect against SSRF attacks, path traversal, and resource exhaustion.
+
+### SSRF Protection
+
+**Environment Variables:**
+
+```bash
+# Optional: Restrict HTTP payload sources to trusted domains (comma-separated)
+ACTIVEKG_URL_ALLOWLIST=example.com,trusted-api.com,docs.yourcompany.com
+
+# Maximum bytes to fetch from URLs (default: 10MB)
+ACTIVEKG_MAX_FETCH_BYTES=10485760
+
+# Timeout for HTTP requests (default: 10 seconds)
+ACTIVEKG_FETCH_TIMEOUT=10
+```
+
+**Protected IP Ranges:**
+
+The system automatically blocks requests to:
+- `127.0.0.0/8` - Localhost
+- `10.0.0.0/8` - Private network
+- `172.16.0.0/12` - Private network
+- `192.168.0.0/16` - Private network
+- `169.254.0.0/16` - Link-local (AWS metadata service)
+- `224.0.0.0/4` - Multicast
+
+**Allowed Content-Types:**
+- `text/*` (text/plain, text/html, text/csv, etc.)
+- `application/json`
+
+### File Access Protection
+
+```bash
+# Restrict local file access to specific directories (comma-separated)
+# Leave empty to default to current working directory
+ACTIVEKG_FILE_BASEDIRS=/opt/data,/mnt/uploads
+
+# Maximum file size for local file reads (default: 1MB)
+ACTIVEKG_MAX_FILE_BYTES=1048576
+```
+
+**Security Features:**
+- Path normalization with `os.path.realpath()`
+- Symlink blocking
+- Directory allowlist enforcement
+- Size limits to prevent memory exhaustion
+
+### Request Body Limits
+
+```bash
+# Maximum request body size (default: 10MB)
+MAX_REQUEST_SIZE_BYTES=10485760
+```
+
+**Enforcement:**
+- Content-Length header validation
+- Chunked transfer streaming validation
+- Returns HTTP 413 (Request Entity Too Large) when exceeded
+
+### Runtime Inspection
+
+Check currently configured limits:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/_admin/security/limits
+```
+
+**Example Response:**
+
+```json
+{
+  "ssrf_protection": {
+    "enabled": true,
+    "url_allowlist": ["example.com", "trusted-api.com"],
+    "blocked_ip_ranges": [
+      "127.0.0.0/8 (localhost)",
+      "10.0.0.0/8 (private)",
+      "172.16.0.0/12 (private)",
+      "192.168.0.0/16 (private)",
+      "169.254.0.0/16 (link-local / AWS metadata)",
+      "224.0.0.0/4 (multicast)"
+    ],
+    "max_fetch_bytes": 10485760,
+    "max_fetch_mb": 10.0,
+    "fetch_timeout_seconds": 10.0,
+    "allowed_content_types": ["text/*", "application/json"]
+  },
+  "file_access": {
+    "enabled": true,
+    "allowed_base_directories": ["/opt/data", "/mnt/uploads"],
+    "symlinks_blocked": true,
+    "max_file_bytes": 1048576,
+    "max_file_mb": 1.0
+  },
+  "request_limits": {
+    "max_request_body_bytes": 10485760,
+    "max_request_body_mb": 10.0,
+    "enforced_for": ["Content-Length header", "chunked transfers"]
+  }
+}
+```
+
+### Production Recommendations
+
+**1. Enable URL Allowlist:**
+```bash
+# Only allow specific trusted domains
+ACTIVEKG_URL_ALLOWLIST=docs.yourcompany.com,api.partner.com
+```
+
+**2. Restrict File Access:**
+```bash
+# Only allow specific data directories
+ACTIVEKG_FILE_BASEDIRS=/opt/activekg/data
+```
+
+**3. Conservative Size Limits:**
+```bash
+# Smaller limits for high-traffic deployments
+ACTIVEKG_MAX_FETCH_BYTES=5242880    # 5MB
+ACTIVEKG_MAX_FILE_BYTES=524288      # 512KB
+MAX_REQUEST_SIZE_BYTES=5242880      # 5MB
+```
+
+**4. Reverse Proxy Configuration:**
+
+Add additional limits at the reverse proxy level (Nginx/Ingress):
+
+```nginx
+# Nginx example
+client_max_body_size 10M;
+client_body_timeout 30s;
+client_header_timeout 30s;
 ```
 
 ---

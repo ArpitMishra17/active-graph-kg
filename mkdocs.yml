@@ -59,6 +59,8 @@ nav:
       - Railway Self-Serve: operations/SELF_SERVE_RAILWAY.md
       - Demo Run: operations/DEMO_RUN.md
       - Proof Points Guide: operations/PROOF_POINTS_GUIDE.md
+  - Archive:
+      - Archive Index: archive/index.md
   - Development Guides:
       - Testing Guide: development/testing.md
       - Architecture: development/architecture.md

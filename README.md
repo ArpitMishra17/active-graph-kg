@@ -9,6 +9,8 @@
 **Version:** 1.0.0
 **Last Updated:** 2025-11-17
 
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?templateUrl=<your-repo-url>)
+
 > **Dual ANN** (IVFFLAT/HNSW), **RLS**, **admin tooling**, **metrics**, and **proof scripts** are in place.
 
 > The first self-refreshing knowledge graph — where every node carries living knowledge: it refreshes, detects drift, and triggers insights automatically.
@@ -215,6 +217,9 @@ Set `{{base_url}}` (default `http://localhost:8000`) and run requests for /healt
 
 ---
 
+See also:
+- docs/operations/connectors.md — Idempotency, cursors, rotation
+
 ## Makefile Shortcuts
 
 Speed up common tasks. Ensure `API` and `TOKEN` are set when required.
@@ -252,6 +257,7 @@ make demo-run && make open-grafana
 Notes:
 - The API accepts either `ACTIVEKG_DSN` or `DATABASE_URL` for the database connection.
 - Run exactly one API instance with `RUN_SCHEDULER=true`.
+- `make open-grafana` opens `GRAFANA_URL` (defaults to `http://localhost:3000/d/activekg-ops`) using your OS opener.
 
 ## Core Features
 
@@ -789,13 +795,9 @@ groups:
           summary: "Search latency p95 > 1s"
 ```
 
-### 5. Add Authentication (Recommended)
-```python
-# TODO: Add JWT middleware
-# - Validate JWT tokens
-# - Extract tenant_id from claims
-# - Set RLS context per request
-```
+### 5. Authentication & RLS (Enabled)
+- JWT middleware is implemented. Tenant ID is derived from JWT claims and RLS context is set per request.
+- See Security guide and examples under “Security & Production Hardening” below.
 
 ---
 
@@ -999,10 +1001,12 @@ Active Graph KG documentation is organized into the following structure:
 
 #### 📖 Implementation Docs
 - **[FINAL_SUMMARY.md](FINAL_SUMMARY.md)** - Executive summary with architecture
-- **[PHASE1_PLUS_IMPROVEMENTS.md](PHASE1_PLUS_IMPROVEMENTS.md)** - Detailed implementation guide
+- **[PHASE1_PLUS_IMPROVEMENTS.md](archive/development-logs/PHASE1_PLUS_IMPROVEMENTS.md)** - Detailed implementation guide
+  - Browse more: [Development Logs](archive/development-logs/)
 
 #### 📦 Archive
 Historical progress summaries, assessments, and implementation notes have been moved to `archive/`:
+- `archive/development-logs/` - Consolidated root development logs and status docs
 - `archive/progress/` - Daily/weekly progress summaries (15 files)
 - `archive/implementation/` - Security and Prometheus implementation details (8 files)
 - `archive/assessments/` - System assessments and reviews (4 files)
@@ -1060,3 +1064,19 @@ Summary
 ---
 
 **Built with ❤️ for the knowledge graph community**
+## Production Deployment Checklist
+
+Before deploying to production, ensure:
+
+- [ ] JWT Authentication: Set `JWT_ENABLED=true` and use RS256 (set `JWT_PUBLIC_KEY`) or HS256 (`JWT_SECRET_KEY`) securely.
+- [ ] RLS Enabled: Run `psql -f enable_rls_policies.sql`.
+- [ ] Scheduler Singleton: Exactly one instance with `RUN_SCHEDULER=true`.
+- [ ] Vector Indexes: Ensure ANN via `POST /admin/indexes` (IVFFLAT/HNSW as needed).
+- [ ] Auto-Index Disabled: Set `AUTO_INDEX_ON_STARTUP=false` for large datasets.
+- [ ] Rate Limiting: Configure Redis and set `RATE_LIMIT_ENABLED=true`.
+- [ ] SSRF Protection: Set `ACTIVEKG_URL_ALLOWLIST` (comma-separated) and consider disabling URL loads in prod.
+- [ ] Request Limits: Configure reverse proxy and/or `MAX_REQUEST_SIZE_BYTES` (defaults to 10MB).
+- [ ] Monitoring: Scrape `/prometheus` and import Grafana dashboard.
+- [ ] Secrets Management: Use env vars / secret store; never commit credentials.
+
+See PRODUCTION_HARDENING_GUIDE.md for details.

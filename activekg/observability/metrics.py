@@ -41,6 +41,13 @@ search_requests_total = Counter(
     "activekg_search_requests_total", "Total number of search requests", ["mode", "score_type"]
 )
 
+# API error counters
+api_errors_total = Counter(
+    "activekg_api_errors_total",
+    "Total number of API errors",
+    ["endpoint", "status", "error_type"],
+)
+
 # Gating score metrics
 gating_score_histogram = Histogram(
     "activekg_gating_score",
@@ -226,6 +233,20 @@ def get_metrics_handler():
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return metrics_endpoint
+
+
+def record_api_error(endpoint: str, status: int, error_type: str = "unknown") -> None:
+    """Record API error with endpoint, status code, and error type.
+
+    Args:
+        endpoint: API endpoint path (preferably route template like /nodes/{node_id})
+        status: HTTP status code
+        error_type: Type of error (e.g., "http_exception", "validation_error", "internal_error")
+    """
+    try:
+        api_errors_total.labels(endpoint=endpoint, status=str(status), error_type=error_type).inc()
+    except Exception:
+        pass
 
 
 # Convenience exports

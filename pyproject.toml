@@ -116,9 +116,7 @@ unfixable = []
 "*.py" = [
     "T20",   # Allow print statements in all root-level files
 ]
-"seed_structured_data.py" = ["T20"]
-"generate_*.py" = ["T20"]  # JWT generators etc
-"quick_validation.py" = ["T20"]
+"generate_*.py" = ["T20"]  # JWT generators etc (now in scripts/)
 
 [tool.ruff.lint.isort]
 known-first-party = ["activekg"]

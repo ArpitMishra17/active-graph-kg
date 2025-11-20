@@ -11,7 +11,7 @@ API_URL = "http://localhost:8000"
 
 # Generate tokens
 print("Generating JWT tokens...")
-result = subprocess.run(["python3", "generate_test_jwt.py"], capture_output=True, text=True)
+result = subprocess.run(["python3", "scripts/generate_test_jwt.py"], capture_output=True, text=True)
 lines = result.stdout.split("\n")
 ADMIN_TOKEN = None
 for line in lines:
@@ -223,3 +223,4 @@ test("GET /_admin/connectors/cache/health", test_cache_health)
 print("\n" + "=" * 60)
 print("VALIDATION COMPLETE")
 print("=" * 60)
+

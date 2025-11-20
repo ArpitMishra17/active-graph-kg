@@ -15,7 +15,7 @@ echo ""
 # Test 2: Generate JWT
 echo "Test 2: Generate test JWT"
 if [ ! -f "scripts/generate_test_jwt.py" ]; then
-    echo "SKIP: generate_test_jwt.py not found"
+    echo "SKIP: scripts/generate_test_jwt.py not found"
     exit 0
 fi
 

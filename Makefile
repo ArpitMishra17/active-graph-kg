@@ -1,11 +1,32 @@
 SHELL := /bin/bash
 
 
-.PHONY: live-smoke live-extended metrics-probe proof-report rate-limit-validate \
+.PHONY: test-unit test-all live-smoke live-extended metrics-probe proof-report rate-limit-validate \
 	trigger-effectiveness ingestion-pipeline scheduler-sla governance-audit \
 	failure-recovery dx-timing demo-run open-grafana db-bootstrap
 
 API ?= http://localhost:8000
+
+# ============================================================================
+# Testing
+# ============================================================================
+
+test-unit:
+	@echo "Running unit tests (no database required)..."
+	@ACTIVEKG_TEST_NO_DB=true JWT_ENABLED=false pytest tests/test_security_limits.py tests/test_connector_config_validation.py -v
+
+test-all:
+	@echo "Running full test suite (database required)..."
+	@if [ -z "$$ACTIVEKG_DSN" ]; then \
+		echo "Error: ACTIVEKG_DSN environment variable must be set"; \
+		echo "Example: export ACTIVEKG_DSN=postgresql://activekg:activekg@localhost:5432/activekg"; \
+		exit 1; \
+	fi
+	@unset ACTIVEKG_TEST_NO_DB && pytest -v
+
+# ============================================================================
+# Evaluation and Smoke Tests
+# ============================================================================
 
 live-smoke:
 	@API=$$API TOKEN=$$TOKEN bash scripts/live_smoke.sh

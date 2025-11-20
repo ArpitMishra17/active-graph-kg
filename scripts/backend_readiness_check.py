@@ -536,7 +536,7 @@ def test_auth_rls():
         import subprocess
 
         result_a = subprocess.run(
-            ["python3", "generate_test_jwt.py", "tenant_a"], capture_output=True, text=True
+            ["python3", "scripts/generate_test_jwt.py", "tenant_a"], capture_output=True, text=True
         )
         token_a = None
         for line in result_a.stdout.split("\n"):
@@ -546,7 +546,7 @@ def test_auth_rls():
 
         # Generate token for tenant B
         result_b = subprocess.run(
-            ["python3", "generate_test_jwt.py", "tenant_b"], capture_output=True, text=True
+            ["python3", "scripts/generate_test_jwt.py", "tenant_b"], capture_output=True, text=True
         )
         token_b = None
         for line in result_b.stdout.split("\n"):
@@ -644,7 +644,7 @@ def main():
     print_info("Generating JWT tokens...")
     import subprocess
 
-    result = subprocess.run(["python3", "generate_test_jwt.py"], capture_output=True, text=True)
+    result = subprocess.run(["python3", "scripts/generate_test_jwt.py"], capture_output=True, text=True)
     lines = result.stdout.split("\n")
     for line in lines:
         if "Admin Token:" in line:

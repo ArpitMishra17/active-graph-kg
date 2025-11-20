@@ -10,6 +10,8 @@ from typing import Any
 
 import numpy as np
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+import uuid
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -20,7 +22,7 @@ from activekg.api.auth import JWT_ENABLED, JWTClaims, get_jwt_claims
 from activekg.api.middleware import apply_rate_limit, get_tenant_context, require_rate_limit
 from activekg.api.rate_limiter import RATE_LIMIT_ENABLED, get_identifier, rate_limiter
 from activekg.common.env import env_str
-from activekg.common.logger import get_enhanced_logger
+from activekg.common.logger import get_enhanced_logger, set_log_context, clear_log_context
 from activekg.common.metrics import metrics
 from activekg.common.validation import (
     AskRequest,
@@ -50,6 +52,7 @@ from activekg.observability import (
     track_embedding_health,
     track_search_request,
 )
+from activekg.observability.metrics import record_api_error
 from activekg.refresh.scheduler import RefreshScheduler
 from activekg.triggers.pattern_store import PatternStore
 from activekg.triggers.trigger_engine import TriggerEngine
@@ -116,13 +119,151 @@ RAW_LOW_SIM_THRESHOLD = float(os.getenv("RAW_LOW_SIM_THRESHOLD", "0.15"))
 ASK_USE_RERANKER = os.getenv("ASK_USE_RERANKER", "true").lower() == "true"
 RERANK_SKIP_TOPSIM = float(os.getenv("RERANK_SKIP_TOPSIM", "0.80"))
 
+MAX_REQUEST_SIZE = int(os.getenv("MAX_REQUEST_SIZE_BYTES", str(10 * 1024 * 1024)))
+
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Enforce Content-Length if present
+        try:
+            cl = request.headers.get("content-length")
+            if cl is not None and int(cl) > MAX_REQUEST_SIZE:
+                return PlainTextResponse("Request too large", status_code=413)
+        except Exception:
+            pass
+
+        # For chunked transfers (no Content-Length), wrap receive to enforce limit
+        if request.headers.get("transfer-encoding", "").lower() == "chunked":
+            original_receive = request.receive
+            total_size = 0
+
+            async def limited_receive():
+                nonlocal total_size
+                message = await original_receive()
+                if message.get("type") == "http.request":
+                    body = message.get("body", b"")
+                    total_size += len(body or b"")
+                    if total_size > MAX_REQUEST_SIZE:
+                        # Abort with 413 once size exceeded
+                        raise HTTPException(status_code=413, detail="Request too large")
+                return message
+
+            # Monkey-patch receive for this request scope
+            request._receive = limited_receive  # type: ignore[attr-defined]
+
+        return await call_next(request)
+
+
+class CorrelationIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Always create/bind a request ID; do not trust tenant headers here.
+        req_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = req_id
+        try:
+            # Bind only request_id at this stage. Tenant context is derived from JWT
+            # by endpoint dependencies and may be added to logs at call sites.
+            set_log_context(request_id=req_id)
+            response = await call_next(request)
+        finally:
+            clear_log_context()
+        response.headers["X-Request-ID"] = req_id
+        return response
+
+
 app = FastAPI(title="Active Graph KG", version=APP_VERSION)
+app.add_middleware(BodySizeLimitMiddleware)
+app.add_middleware(CorrelationIDMiddleware)
+
+
+def get_route_name(request: Request) -> str:
+    """Extract route name/template from Starlette request.
+
+    Returns route template like "/nodes/{node_id}" instead of "/nodes/abc-123"
+    to avoid high cardinality in metrics.
+    """
+    try:
+        # Access Starlette's route matching
+        if hasattr(request, "scope") and "route" in request.scope:
+            route = request.scope["route"]
+            if hasattr(route, "path"):
+                return route.path
+
+        # Fallback: try to match against app routes
+        for route in request.app.routes:
+            match, _ = route.matches(request.scope)
+            if match.name == "full":  # Full match
+                if hasattr(route, "path"):
+                    return route.path
+
+        # Final fallback to raw path
+        return request.url.path
+    except Exception:
+        return request.url.path
+
+
+class ApiErrorMetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        try:
+            response = await call_next(request)
+            if response.status_code >= 400:
+                try:
+                    route_name = get_route_name(request)
+                    # Categorize error type based on status code
+                    if response.status_code == 400:
+                        error_type = "bad_request"
+                    elif response.status_code == 401:
+                        error_type = "unauthorized"
+                    elif response.status_code == 403:
+                        error_type = "forbidden"
+                    elif response.status_code == 404:
+                        error_type = "not_found"
+                    elif response.status_code == 413:
+                        error_type = "request_too_large"
+                    elif response.status_code == 422:
+                        error_type = "validation_error"
+                    elif response.status_code == 429:
+                        error_type = "rate_limit_exceeded"
+                    elif 400 <= response.status_code < 500:
+                        error_type = "client_error"
+                    else:
+                        error_type = "server_error"
+
+                    record_api_error(route_name, response.status_code, error_type)
+                except Exception:
+                    pass
+            return response
+        except Exception as exc:
+            # Count as 500
+            try:
+                route_name = get_route_name(request)
+                error_type = type(exc).__name__.lower() if exc else "internal_error"
+                record_api_error(route_name, 500, error_type)
+            except Exception:
+                pass
+            raise
+
+
+app.add_middleware(ApiErrorMetricsMiddleware)
 logger = get_enhanced_logger(__name__)
-repo = GraphRepository(DSN, candidate_factor=WEIGHTED_SEARCH_CANDIDATE_FACTOR)
-embedder = EmbeddingProvider(backend=EMBEDDING_BACKEND, model_name=EMBEDDING_MODEL)
-pattern_store = PatternStore(DSN)
-trigger_engine = TriggerEngine(pattern_store, repo)
-scheduler: RefreshScheduler | None = None
+
+# Lazy initialization for test mode (allows import without DB connection)
+TEST_MODE = os.getenv("ACTIVEKG_TEST_NO_DB", "false").lower() == "true"
+
+if TEST_MODE:
+    # Test mode: defer initialization, use None/mocks
+    repo = None  # type: ignore[assignment]
+    embedder = None  # type: ignore[assignment]
+    pattern_store = None  # type: ignore[assignment]
+    trigger_engine = None  # type: ignore[assignment]
+    scheduler: RefreshScheduler | None = None
+    logger.warning("Running in TEST_MODE - DB connections deferred")
+else:
+    # Normal mode: eager initialization
+    repo = GraphRepository(DSN, candidate_factor=WEIGHTED_SEARCH_CANDIDATE_FACTOR)
+    embedder = EmbeddingProvider(backend=EMBEDDING_BACKEND, model_name=EMBEDDING_MODEL)
+    pattern_store = PatternStore(DSN)
+    trigger_engine = TriggerEngine(pattern_store, repo)
+    scheduler: RefreshScheduler | None = None
 
 # Mount admin connectors router (minimal MVP)
 app.include_router(connectors_admin_router)
@@ -372,6 +513,65 @@ def connector_rotate_keys(
     except Exception as e:
         logger.error(f"Key rotation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Key rotation failed: {str(e)}")
+
+
+@app.get("/_admin/security/limits")
+def get_security_limits(claims: JWTClaims | None = Depends(get_jwt_claims)) -> dict[str, Any]:
+    """Get configured security limits and SSRF protection settings.
+
+    Returns current configuration for:
+    - SSRF protection (URL allowlist, blocked IP ranges)
+    - File access controls (allowed directories, size limits)
+    - Request body size limits
+
+    Security:
+        - When JWT is enabled, requires authenticated token
+        - No admin scope required (read-only configuration)
+    """
+    import os
+
+    # Parse URL allowlist
+    allow_raw = os.getenv("ACTIVEKG_URL_ALLOWLIST", "")
+    allow_hosts = [h.strip() for h in allow_raw.split(",") if h.strip()]
+
+    # Parse file basedirs
+    basedirs_raw = os.getenv("ACTIVEKG_FILE_BASEDIRS", "")
+    basedirs = [d.strip() for d in basedirs_raw.split(",") if d.strip()]
+    if not basedirs:
+        basedirs = ["<current working directory>"]
+
+    return {
+        "ssrf_protection": {
+            "enabled": True,
+            "url_allowlist": allow_hosts if allow_hosts else ["*any domain*"],
+            "blocked_ip_ranges": [
+                "127.0.0.0/8 (localhost)",
+                "10.0.0.0/8 (private)",
+                "172.16.0.0/12 (private)",
+                "192.168.0.0/16 (private)",
+                "169.254.0.0/16 (link-local / AWS metadata)",
+                "224.0.0.0/4 (multicast)",
+            ],
+            "max_fetch_bytes": int(os.getenv("ACTIVEKG_MAX_FETCH_BYTES", "10485760")),
+            "max_fetch_mb": round(
+                int(os.getenv("ACTIVEKG_MAX_FETCH_BYTES", "10485760")) / (1024 * 1024), 2
+            ),
+            "fetch_timeout_seconds": float(os.getenv("ACTIVEKG_FETCH_TIMEOUT", "10")),
+            "allowed_content_types": ["text/*", "application/json"],
+        },
+        "file_access": {
+            "enabled": True,
+            "allowed_base_directories": basedirs,
+            "symlinks_blocked": True,
+            "max_file_bytes": int(os.getenv("ACTIVEKG_MAX_FILE_BYTES", "1048576")),
+            "max_file_mb": round(int(os.getenv("ACTIVEKG_MAX_FILE_BYTES", "1048576")) / (1024 * 1024), 2),
+        },
+        "request_limits": {
+            "max_request_body_bytes": MAX_REQUEST_SIZE,
+            "max_request_body_mb": round(MAX_REQUEST_SIZE / (1024 * 1024), 2),
+            "enforced_for": ["Content-Length header", "chunked transfers"],
+        },
+    }
 
 
 @app.get("/debug/dbinfo")

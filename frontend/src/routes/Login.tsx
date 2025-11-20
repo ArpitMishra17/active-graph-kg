@@ -72,7 +72,7 @@ export default function Login() {
           <div className="mt-4 text-xs text-gray-500">
             <p className="font-medium mb-1">For testing, use:</p>
             <code className="block bg-gray-100 p-2 rounded">
-              python3 generate_test_jwt.py
+              python3 scripts/generate_test_jwt.py
             </code>
           </div>
         </form>

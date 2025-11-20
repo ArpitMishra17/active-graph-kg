@@ -15,7 +15,7 @@ from fastapi import Depends, HTTPException, Request, Response
 
 from activekg.api.auth import JWT_ENABLED, JWTClaims, get_jwt_claims
 from activekg.api.rate_limiter import RATE_LIMIT_ENABLED, get_identifier, rate_limiter
-from activekg.common.logger import get_enhanced_logger
+from activekg.common.logger import get_enhanced_logger, set_log_context
 from activekg.observability.metrics import access_violations_total
 
 logger = get_enhanced_logger(__name__)
@@ -124,6 +124,9 @@ def get_tenant_context(
     """
     if JWT_ENABLED and claims:
         # JWT enabled: use trusted claims
+        # Set tenant in log context for automatic inclusion in all logs
+        set_log_context(tenant_id=claims.tenant_id)
+
         # Detect cross-tenant attempts via query param (best-effort; body parsing would consume stream)
         try:
             q_tid = request.query_params.get("tenant_id") if request else None
@@ -136,6 +139,7 @@ def get_tenant_context(
     # Dev mode: use env-driven tenant (defaults to 'default')
     # Prevents hardcoding and allows test isolation
     dev_tenant = os.getenv("ACTIVEKG_DEV_TENANT", "default")
+    set_log_context(tenant_id=dev_tenant)
     return (dev_tenant, "dev_user", "user")
 
 

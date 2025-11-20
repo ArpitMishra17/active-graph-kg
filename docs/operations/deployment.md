@@ -520,6 +520,47 @@ sudo systemctl start activekg
 
 ---
 
+## Partitioning Strategies (Optional, for large datasets)
+
+For multi-tenant datasets with high volume, consider table partitioning to improve vacuum/ANALYZE efficiency and reduce bloat.
+
+### Option A: Partition by tenant_id (LIST)
+
+```sql
+-- Create a partitioned copy of nodes
+CREATE TABLE nodes_partitioned (LIKE nodes INCLUDING ALL) PARTITION BY LIST (tenant_id);
+
+-- Example tenant partition
+CREATE TABLE nodes_tenant_acme PARTITION OF nodes_partitioned FOR VALUES IN ('acme');
+
+-- Migrate data (example)
+INSERT INTO nodes_partitioned SELECT * FROM nodes WHERE tenant_id = 'acme';
+
+-- Indexes per partition (as needed)
+CREATE INDEX idx_nodes_tenant_acme_embedding ON nodes_tenant_acme USING ivfflat (embedding vector_cosine_ops);
+```
+
+### Option B: Partition by created_at (RANGE)
+
+```sql
+-- Create a time-series partitioned table
+CREATE TABLE nodes_timeseries (LIKE nodes INCLUDING ALL) PARTITION BY RANGE (created_at);
+
+-- Monthly partitions
+CREATE TABLE nodes_2025_11 PARTITION OF nodes_timeseries FOR VALUES FROM ('2025-11-01') TO ('2025-12-01');
+CREATE TABLE nodes_2025_12 PARTITION OF nodes_timeseries FOR VALUES FROM ('2025-12-01') TO ('2026-01-01');
+
+-- Indexes per partition
+CREATE INDEX idx_nodes_2025_11_embedding ON nodes_2025_11 USING ivfflat (embedding vector_cosine_ops);
+```
+
+Notes:
+- Keep ANN indexes aligned with SEARCH_DISTANCE (cosine vs l2).
+- Adjust autovacuum settings per partition based on write frequency.
+- Consider moving partitions to different tablespaces to balance IO.
+
+---
+
 ## Performance Optimization
 
 ### 1. Vector Index Tuning

@@ -47,14 +47,49 @@ jobs:
         continue-on-error: true
 
   # ============================================================================
-  # Job 2: Unit Tests
+  # Job 2: Fast Unit Tests (No Database Required)
+  # ============================================================================
+  fast-unit-tests:
+    name: Fast Unit Tests (No DB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest pytest-timeout
+          pip install -r requirements.txt
+
+      - name: Run unit tests (no database)
+        env:
+          ACTIVEKG_TEST_NO_DB: "true"
+          JWT_ENABLED: "false"
+        run: |
+          pytest \
+            tests/test_security_limits.py \
+            tests/test_connector_config_validation.py \
+            -v --tb=short --timeout=30
+        continue-on-error: false
+
+  # ============================================================================
+  # Job 3: Unit Tests with Database (PG Matrix)
   # ============================================================================
   unit-tests:
-    name: Unit Tests
+    name: Unit Tests (PG ${{ matrix.postgres }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        postgres: ["15", "16"]
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: pgvector/pgvector:pg${{ matrix.postgres }}
         env:
           POSTGRES_USER: activekg
           POSTGRES_PASSWORD: activekg
@@ -104,7 +139,7 @@ jobs:
         continue-on-error: false
 
   # ============================================================================
-  # Job 3: Integration Tests with PostgreSQL + pgvector
+  # Job 4: E2E Integration Tests with PostgreSQL + Redis
   # ============================================================================
   integration-tests:
     name: E2E Integration Tests
@@ -240,7 +275,7 @@ jobs:
           fi
 
   # ============================================================================
-  # Job 4: Performance Benchmarks (Optional, only on main)
+  # Job 5: Performance Benchmarks (Optional, only on main)
   # ============================================================================
   benchmarks:
     name: Performance Benchmarks
@@ -314,7 +349,7 @@ jobs:
         if: always()
 
   # ============================================================================
-  # Job 5: Security Scanning
+  # Job 6: Security Scanning
   # ============================================================================
   security:
     name: Security Scanning
@@ -352,22 +387,24 @@ jobs:
         if: always()
 
   # ============================================================================
-  # Job 6: Build Status Summary
+  # Job 7: Build Status Summary
   # ============================================================================
   build-summary:
     name: Build Summary
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, integration-tests]
+    needs: [lint, fast-unit-tests, unit-tests, integration-tests]
     if: always()
     steps:
       - name: Check build status
         run: |
           echo "Build Summary:"
           echo "  Lint: ${{ needs.lint.result }}"
-          echo "  Unit Tests: ${{ needs.unit-tests.result }}"
+          echo "  Fast Unit Tests: ${{ needs.fast-unit-tests.result }}"
+          echo "  Unit Tests (DB): ${{ needs.unit-tests.result }}"
           echo "  Integration Tests: ${{ needs.integration-tests.result }}"
-          
-          if [ "${{ needs.unit-tests.result }}" != "success" ] || \
+
+          if [ "${{ needs.fast-unit-tests.result }}" != "success" ] || \
+             [ "${{ needs.unit-tests.result }}" != "success" ] || \
              [ "${{ needs.integration-tests.result }}" != "success" ]; then
             echo "❌ Build failed - required jobs did not pass"
             exit 1

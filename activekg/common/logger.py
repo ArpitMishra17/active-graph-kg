@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import wraps
 from typing import Any
+from contextvars import ContextVar
 
 # Import metrics from the new package path
 try:
@@ -35,6 +36,14 @@ class StructuredFormatter(logging.Formatter):
         # Add extra fields if present
         if hasattr(record, "extra_fields"):
             log_entry.update(record.extra_fields)
+
+        # Add request-scoped context if present
+        try:
+            ctx = _log_context.get()
+            if ctx:
+                log_entry.update(ctx)
+        except Exception:
+            pass
 
         # Add exception info if present
         if record.exc_info:
@@ -89,6 +98,32 @@ class MetricsLogger:
             metrics.increment_counter(
                 "log_messages_total", labels={"level": logging.getLevelName(level).lower()}
             )
+
+
+# Request-scoped log context (request_id, tenant_id)
+_log_context: ContextVar[dict[str, Any]] = ContextVar("log_context", default={})
+
+
+def set_log_context(request_id: str | None = None, tenant_id: str | None = None) -> None:
+    ctx = {}
+    if request_id:
+        ctx["request_id"] = request_id
+    if tenant_id:
+        ctx["tenant_id"] = tenant_id
+    # Merge with existing, if any
+    try:
+        cur = _log_context.get()
+        if cur:
+            cur.update(ctx)
+            _log_context.set(cur)
+        else:
+            _log_context.set(ctx)
+    except Exception:
+        _log_context.set(ctx)
+
+
+def clear_log_context() -> None:
+    _log_context.set({})
 
 
 def get_logger(name: str) -> logging.Logger:

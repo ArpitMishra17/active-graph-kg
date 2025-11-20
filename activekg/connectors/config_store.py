@@ -21,6 +21,12 @@ from prometheus_client import Counter
 from psycopg.rows import dict_row
 
 from activekg.connectors.encryption import get_encryption, sanitize_config_for_logging
+from activekg.connectors.schemas import (
+    AzureBlobConnectorConfig,
+    DriveConnectorConfig,
+    GCSConnectorConfig,
+    S3ConnectorConfig,
+)
 from activekg.connectors.types import ConnectorConfigTD
 
 from .types import RotationBatchResultTD
@@ -64,6 +70,42 @@ connector_rotation_total = Counter(
 connector_rotation_batch_latency_seconds = Counter(
     "connector_rotation_batch_latency_seconds", "Total latency for key rotation batches in seconds"
 )
+
+
+def validate_connector_config(provider: str, config: dict[str, Any]) -> dict[str, Any]:
+    """Validate provider-specific config using Pydantic models.
+
+    Args:
+        provider: Connector provider type
+        config: Raw config dict
+
+    Returns:
+        Validated config dict
+
+    Raises:
+        ValueError: If config is invalid
+    """
+    validators = {
+        "s3": S3ConnectorConfig,
+        "gcs": GCSConnectorConfig,
+        "drive": DriveConnectorConfig,
+        "azure": AzureBlobConnectorConfig,
+    }
+
+    validator = validators.get(provider)
+    if not validator:
+        # Unknown provider - skip validation but log warning
+        logger.warning(f"No validator for provider: {provider}")
+        return config
+
+    try:
+        # Validate and return as dict
+        validated = validator(**config)
+        return validated.model_dump()
+    except Exception as e:
+        # Log validation errors for debugging
+        logger.error(f"Config validation failed for {provider}: {e}")
+        raise ValueError(f"Invalid {provider} config: {e}")
 
 
 class ConnectorConfigStore:
@@ -212,7 +254,7 @@ class ConnectorConfigStore:
     ) -> bool:
         """Insert or update connector config.
 
-        Automatically encrypts secrets before storing.
+        Automatically validates and encrypts secrets before storing.
 
         Args:
             tenant_id: Tenant ID
@@ -222,10 +264,16 @@ class ConnectorConfigStore:
 
         Returns:
             True if successful
+
+        Raises:
+            ValueError: If config validation fails
         """
         try:
+            # Validate config using provider-specific Pydantic models
+            validated_config = validate_connector_config(provider, config)
+
             # Encrypt secrets using active KEK
-            encrypted_config = self.encryption.encrypt_config(config)
+            encrypted_config = self.encryption.encrypt_config(validated_config)
             active_key_version = self.encryption.active_version
 
             with self._get_connection() as conn:
