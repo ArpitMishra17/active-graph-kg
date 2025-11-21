@@ -40,7 +40,7 @@ class StructuredFormatter(logging.Formatter):
         # Add request-scoped context if present
         try:
             ctx = _log_context.get()
-            if ctx:
+            if ctx is not None:
                 log_entry.update(ctx)
         except Exception:
             pass
@@ -101,7 +101,7 @@ class MetricsLogger:
 
 
 # Request-scoped log context (request_id, tenant_id)
-_log_context: ContextVar[dict[str, Any]] = ContextVar("log_context", default={})
+_log_context: ContextVar[dict[str, Any] | None] = ContextVar("log_context", default=None)
 
 
 def set_log_context(request_id: str | None = None, tenant_id: str | None = None) -> None:
@@ -113,7 +113,7 @@ def set_log_context(request_id: str | None = None, tenant_id: str | None = None)
     # Merge with existing, if any
     try:
         cur = _log_context.get()
-        if cur:
+        if cur is not None:
             cur.update(ctx)
             _log_context.set(cur)
         else:
@@ -123,7 +123,7 @@ def set_log_context(request_id: str | None = None, tenant_id: str | None = None)
 
 
 def clear_log_context() -> None:
-    _log_context.set({})
+    _log_context.set(None)
 
 
 def get_logger(name: str) -> logging.Logger:

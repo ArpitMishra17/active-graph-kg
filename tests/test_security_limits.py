@@ -5,16 +5,14 @@ For integration tests with real DB, unset the flag or set it to false.
 """
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 # Enable test mode to avoid DB connection during import
 os.environ["ACTIVEKG_TEST_NO_DB"] = "true"
 os.environ["JWT_ENABLED"] = "false"  # Disable JWT for easier testing
-
-from fastapi.testclient import TestClient
-from pydantic import ValidationError
 
 from activekg.api.main import app, get_route_name
 from activekg.connectors.config_store import validate_connector_config
@@ -110,8 +108,6 @@ class TestRouteNameExtraction:
 
     def test_get_route_name_with_path_params(self):
         """Test that route name uses template, not actual values."""
-        from fastapi import Request
-
         # Create a mock request with route info
         class MockRoute:
             path = "/nodes/{node_id}"
@@ -135,8 +131,6 @@ class TestRouteNameExtraction:
 
     def test_get_route_name_fallback(self):
         """Test route name fallback to raw path when template not available."""
-        from fastapi import Request
-
         class MockRequest:
             scope = {}
             url = type("URL", (), {"path": "/custom/path"})()

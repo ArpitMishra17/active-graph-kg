@@ -13,7 +13,7 @@ API ?= http://localhost:8000
 
 test-unit:
 	@echo "Running unit tests (no database required)..."
-	@ACTIVEKG_TEST_NO_DB=true JWT_ENABLED=false pytest tests/test_security_limits.py tests/test_connector_config_validation.py -v
+	@ACTIVEKG_TEST_NO_DB=true JWT_ENABLED=false pytest tests/test_security_limits.py -v
 
 test-all:
 	@echo "Running full test suite (database required)..."
