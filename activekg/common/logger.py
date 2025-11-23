@@ -5,10 +5,10 @@ import logging
 import sys
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import wraps
 from typing import Any
-from contextvars import ContextVar
 
 # Import metrics from the new package path
 try:

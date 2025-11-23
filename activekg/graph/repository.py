@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import socket
 import sys
 import time
 from collections.abc import Sequence
 from contextlib import contextmanager
-from urllib.parse import urlparse
-import ipaddress
-import socket
 from datetime import timezone
 from typing import Any, Literal, TypedDict, cast
+from urllib.parse import urlparse
 
 # NotRequired was added in Python 3.11, use typing_extensions for 3.10
 if sys.version_info >= (3, 11):
