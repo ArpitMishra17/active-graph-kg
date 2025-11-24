@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector

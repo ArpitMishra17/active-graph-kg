@@ -16,7 +16,7 @@ import base64
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import requests
@@ -24,7 +24,7 @@ from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +192,8 @@ def verify_signature(
 
         # 5. Verify signature
         try:
-            public_key = cert.public_key()
+            # SNS uses RSA public keys, cast to RSAPublicKey
+            public_key = cast(rsa.RSAPublicKey, cert.public_key())
 
             # SNS uses SHA1 with RSA (PKCS1v15 padding)
             public_key.verify(

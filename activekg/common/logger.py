@@ -15,8 +15,8 @@ try:
     from activekg.common.metrics import PerformanceTimer, metrics
 except ImportError:
     # Fallback for when metrics module is not available
-    metrics = None
-    PerformanceTimer = None
+    metrics = None  # type: ignore[assignment]
+    PerformanceTimer = None  # type: ignore[assignment,misc]
 
 
 class StructuredFormatter(logging.Formatter):
@@ -213,7 +213,8 @@ def log_performance(operation_name: str, labels: dict[str, str] | None = None):
 def log_operation(logger: Union[logging.Logger, MetricsLogger], operation: str, **context: Any):
     """Context manager for logging operations with timing."""
     start_time = time.time()
-    if hasattr(logger, "info"):
+    # Check if this is a MetricsLogger (has extra_fields parameter)
+    if isinstance(logger, MetricsLogger):
         logger.info(f"Starting {operation}", extra_fields=context)
     else:
         logger.info(f"Starting {operation}")
@@ -221,7 +222,7 @@ def log_operation(logger: Union[logging.Logger, MetricsLogger], operation: str, 
     try:
         yield
         duration = (time.time() - start_time) * 1000
-        if hasattr(logger, "info"):
+        if isinstance(logger, MetricsLogger):
             logger.info(
                 f"Completed {operation}",
                 extra_fields={**context, "duration_ms": duration, "status": "success"},
@@ -230,7 +231,7 @@ def log_operation(logger: Union[logging.Logger, MetricsLogger], operation: str, 
             logger.info(f"Completed {operation} in {duration:.2f}ms")
     except Exception as e:
         duration = (time.time() - start_time) * 1000
-        if hasattr(logger, "error"):
+        if isinstance(logger, MetricsLogger):
             logger.error(
                 f"Failed {operation}",
                 extra_fields={

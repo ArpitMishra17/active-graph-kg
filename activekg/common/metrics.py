@@ -10,11 +10,11 @@ import numpy as np
 
 if TYPE_CHECKING:
     import redis
-
-try:
-    import redis as _redis
-except Exception:  # pragma: no cover
-    _redis = None
+else:
+    try:
+        import redis as _redis  # type: ignore[no-redef]
+    except Exception:  # pragma: no cover
+        _redis = None  # type: ignore[assignment]
 
 
 @dataclass
