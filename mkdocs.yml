@@ -84,6 +84,9 @@ nav:
       - Testing Guide: development/testing.md
       - Architecture: development/architecture.md
   - Connectors:
+      - Overview: operations/connectors.md
+      - S3 Connector: S3_CONNECTOR.md
+      - GCS Connector: GCS_CONNECTOR.md
       - Drive Connector: DRIVE_CONNECTOR.md
       - ANN Indexing Guide: ANN_INDEXING_GUIDE.md
 

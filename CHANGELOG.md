@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Security Hardening** (SSRF protection, file access controls, request size limits)
 - **Observability** with structured logging and performance tracking
 - **Scheduler** with SLA tracking and failure recovery
-- **Connector Framework** supporting S3, GCS, Azure, Google Drive
+- **Connector Framework** with S3, GCS, and Google Drive (Azure planned)
 - **Dual Indexing Strategy** (IVFFLAT + HNSW) for vector search
 - **Connection Pooling** with psycopg-pool for scalability
 - **Pre-commit Hooks** for code quality enforcement

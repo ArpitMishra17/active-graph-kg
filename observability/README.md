@@ -454,7 +454,7 @@ Default thresholds are production-ready but may need adjustment based on your sc
 
 ### Adding New Connector Providers
 
-When adding new providers (Drive, Notion, etc.), no changes needed to alerts or dashboards - they automatically detect new `provider` label values.
+When adding new providers (Azure, etc.), no changes needed to alerts or dashboards - they automatically detect new `provider` label values.
 
 **Verify new provider appears**:
 ```bash

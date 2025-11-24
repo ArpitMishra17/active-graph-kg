@@ -1,6 +1,6 @@
-"""Queue worker for processing S3 connector events.
+"""Queue worker for processing connector events (S3, GCS, Drive).
 
-Polls Redis queue for change events and processes them via IngestionProcessor.
+Polls Redis queues for change events and processes them via IngestionProcessor.
 Supports graceful shutdown and observability.
 """
 
@@ -19,6 +19,8 @@ from prometheus_client import Counter, Gauge, Histogram
 
 from activekg.connectors.base import ChangeItem
 from activekg.connectors.ingest import IngestionProcessor
+from activekg.connectors.providers.drive import DriveConnector
+from activekg.connectors.providers.gcs import GCSConnector
 from activekg.connectors.providers.s3 import S3Connector
 from activekg.connectors.types import ConnectorProvider
 from activekg.graph.repository import GraphRepository
@@ -43,6 +45,8 @@ worker_queue_depth = Gauge(
 worker_batch_latency = Histogram(
     "connector_worker_batch_latency_seconds", "Time to process one batch", ["tenant", "provider"]
 )
+
+SUPPORTED_PROVIDERS: tuple[ConnectorProvider, ...] = ("s3", "gcs", "drive")
 
 
 class ConnectorWorker:
@@ -70,6 +74,7 @@ class ConnectorWorker:
         self.batch_size = batch_size
         self.poll_interval = poll_interval_seconds
         self.running = True
+        self.supported_providers = SUPPORTED_PROVIDERS
 
         # Signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._shutdown_handler)
@@ -96,27 +101,41 @@ class ConnectorWorker:
             self._config_store = get_config_store()
         return self._config_store
 
-    def load_s3_config(self, tenant_id: str) -> dict[str, Any] | None:
-        """Load S3 connector config for tenant from database.
+    def load_config(self, tenant_id: str, provider: ConnectorProvider) -> dict[str, Any] | None:
+        """Load connector config for tenant from database.
 
         Uses config store with automatic caching.
 
         Args:
             tenant_id: Tenant ID
+            provider: Connector provider
 
         Returns:
             Decrypted config dict or None if not found/disabled
         """
         try:
-            config = self.config_store.get(tenant_id, "s3")
+            config = self.config_store.get(tenant_id, provider)
             if config:
-                logger.debug(f"Loaded S3 config for tenant {tenant_id}")
+                logger.debug(f"Loaded {provider} config for tenant {tenant_id}")
             else:
-                logger.debug(f"No S3 config found for tenant {tenant_id}")
+                logger.debug(f"No {provider} config found for tenant {tenant_id}")
             return config
         except Exception as e:
-            logger.error(f"Failed to load S3 config for {tenant_id}: {e}")
+            logger.error(f"Failed to load {provider} config for {tenant_id}: {e}")
             return None
+
+    def _build_connector(
+        self, provider: ConnectorProvider, tenant_id: str, config: dict[str, Any]
+    ):
+        """Instantiate the right connector for the provider."""
+        if provider == "s3":
+            return S3Connector(tenant_id=tenant_id, config=config)
+        if provider == "gcs":
+            return GCSConnector(tenant_id=tenant_id, config=config)
+        if provider == "drive":
+            return DriveConnector(tenant_id=tenant_id, config=config)
+
+        raise ValueError(f"Unsupported provider: {provider}")
 
     def process_batch(self, tenant_id: str, provider: ConnectorProvider = "s3") -> int:
         """Process one batch of events for tenant.
@@ -157,16 +176,24 @@ class ConnectorWorker:
             logger.info(f"Processing batch: {len(batch)} events (tenant={tenant_id})")
 
             # Load connector config
-            config = self.load_s3_config(tenant_id)
+            config = self.load_config(tenant_id, provider)
             if not config:
-                logger.error(f"No S3 config found for tenant {tenant_id}")
+                logger.error(f"No {provider} config found for tenant {tenant_id}")
                 worker_errors.labels(
                     tenant=tenant_id, provider=provider, error_type="no_config"
                 ).inc()
                 return 0
 
             # Create connector + processor
-            connector = S3Connector(tenant_id=tenant_id, config=config)
+            try:
+                connector = self._build_connector(provider, tenant_id, config)
+            except Exception as e:
+                logger.error(f"Failed to build connector for {provider}: {e}")
+                worker_errors.labels(
+                    tenant=tenant_id, provider=provider, error_type="build_connector"
+                ).inc()
+                return 0
+
             processor = IngestionProcessor(
                 connector=connector, repo=self.repo, redis_client=self.redis_client
             )
@@ -227,30 +254,36 @@ class ConnectorWorker:
 
         while self.running:
             try:
-                # Get all tenant queues (scan for connector:s3:*:queue)
-                cursor = 0
-                tenant_queues = set()
-                while True:
-                    cursor, keys = self.redis_client.scan(
-                        cursor=cursor, match="connector:s3:*:queue", count=100
-                    )
-                    for key in keys:
-                        # Extract tenant_id from key
-                        # Format: connector:s3:{tenant_id}:queue
-                        parts = key.decode("utf-8").split(":")
-                        if len(parts) == 4:
-                            tenant_queues.add(parts[2])
-                    if cursor == 0:
-                        break
+                # Get all tenant queues (scan per provider)
+                provider_queues: dict[str, set[str]] = {p: set() for p in self.supported_providers}
+                for provider in self.supported_providers:
+                    cursor = 0
+                    pattern = f"connector:{provider}:*:queue"
+                    while True:
+                        cursor, keys = self.redis_client.scan(
+                            cursor=cursor, match=pattern, count=100
+                        )
+                        for key in keys:
+                            # Extract tenant_id from key
+                            # Format: connector:{provider}:{tenant_id}:queue
+                            parts = key.decode("utf-8").split(":")
+                            if len(parts) == 4:
+                                provider_queues[provider].add(parts[2])
+                        if cursor == 0:
+                            break
 
-                # Process each tenant queue
+                # Process each tenant queue per provider
                 total_processed = 0
-                for tenant_id in tenant_queues:
-                    try:
-                        count = self.process_batch(tenant_id)
-                        total_processed += count
-                    except Exception as e:
-                        logger.error(f"Error processing tenant {tenant_id}: {e}", exc_info=True)
+                for provider, tenants in provider_queues.items():
+                    for tenant_id in tenants:
+                        try:
+                            count = self.process_batch(tenant_id, provider)
+                            total_processed += count
+                        except Exception as e:
+                            logger.error(
+                                f"Error processing tenant {tenant_id} for {provider}: {e}",
+                                exc_info=True,
+                            )
 
                 # If no work done, sleep
                 if total_processed == 0:

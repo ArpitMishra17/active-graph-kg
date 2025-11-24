@@ -1,11 +1,14 @@
 """
 Connector framework for ingesting external content into Active Graph KG.
 
-Supports S3, GCS, Azure Blob, Google Drive, Notion, and ATS systems.
+Fully supported: S3, Google Cloud Storage (GCS), Google Drive.
+Planned: Azure Blob Storage.
 """
 
 from .base import BaseConnector, ChangeItem, ConnectorStats, FetchResult
 from .chunker import chunk_text, create_chunk_nodes
+from .providers.drive import DriveConnector
+from .providers.gcs import GCSConnector
 from .providers.s3 import S3Connector
 from .retry import PermanentError, TransientError, clear_dlq, inspect_dlq, with_retry_and_dlq
 from .schemas import (
@@ -36,4 +39,6 @@ __all__ = [
     "inspect_dlq",
     "clear_dlq",
     "S3Connector",
+    "GCSConnector",
+    "DriveConnector",
 ]
