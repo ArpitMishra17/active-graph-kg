@@ -101,6 +101,14 @@ class RefreshScheduler:
             try:
                 t0 = _now()
                 text = self.repo.load_payload_text(node)
+
+                # Guard against empty/None payloads
+                if not text or not text.strip():
+                    self.logger.warning(
+                        f"Skipping refresh for node {node.id}: empty or whitespace-only payload"
+                    )
+                    continue
+
                 old = node.embedding
                 new = self.embedder.encode([text])[0]
                 drift = (
