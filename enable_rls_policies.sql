@@ -2,6 +2,31 @@
 -- Run this after init.sql to enable tenant isolation
 
 -- ============================================================================
+-- CREATE ROLES FIRST (moved from bottom)
+-- ============================================================================
+
+-- Create admin role (if not exists)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin_role') THEN
+        CREATE ROLE admin_role;
+    END IF;
+END$$;
+
+-- Create app_user role for regular API access
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN
+        CREATE ROLE app_user LOGIN PASSWORD 'change_me_in_production';
+    END IF;
+END$$;
+
+-- Grant usage to app_user
+GRANT USAGE ON SCHEMA public TO app_user;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO app_user;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO app_user;
+
+-- ============================================================================
 -- NODES TABLE
 -- ============================================================================
 
@@ -128,32 +153,11 @@ CREATE POLICY admin_all_history ON embedding_history
     WITH CHECK (true);
 
 -- ============================================================================
--- CREATE ROLES
+-- ROLE GRANTS (roles created at top of file)
 -- ============================================================================
-
--- Create admin role (if not exists)
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin_role') THEN
-        CREATE ROLE admin_role;
-    END IF;
-END$$;
 
 -- Grant admin role to specific user (replace 'admin_user' with actual username)
 -- GRANT admin_role TO admin_user;
-
--- Create app_user role for regular API access
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN
-        CREATE ROLE app_user LOGIN PASSWORD 'change_me_in_production';
-    END IF;
-END$$;
-
--- Grant usage to app_user
-GRANT USAGE ON SCHEMA public TO app_user;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO app_user;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO app_user;
 
 -- ============================================================================
 -- HELPER FUNCTIONS
