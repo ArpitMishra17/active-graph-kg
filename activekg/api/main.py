@@ -564,7 +564,9 @@ def get_security_limits(claims: JWTClaims | None = Depends(get_jwt_claims)) -> d
             "allowed_base_directories": basedirs,
             "symlinks_blocked": True,
             "max_file_bytes": int(os.getenv("ACTIVEKG_MAX_FILE_BYTES", "1048576")),
-            "max_file_mb": round(int(os.getenv("ACTIVEKG_MAX_FILE_BYTES", "1048576")) / (1024 * 1024), 2),
+            "max_file_mb": round(
+                int(os.getenv("ACTIVEKG_MAX_FILE_BYTES", "1048576")) / (1024 * 1024), 2
+            ),
         },
         "request_limits": {
             "max_request_body_bytes": MAX_REQUEST_SIZE,

@@ -108,6 +108,7 @@ class TestRouteNameExtraction:
 
     def test_get_route_name_with_path_params(self):
         """Test that route name uses template, not actual values."""
+
         # Create a mock request with route info
         class MockRoute:
             path = "/nodes/{node_id}"
@@ -131,6 +132,7 @@ class TestRouteNameExtraction:
 
     def test_get_route_name_fallback(self):
         """Test route name fallback to raw path when template not available."""
+
         class MockRequest:
             scope = {}
             url = type("URL", (), {"path": "/custom/path"})()

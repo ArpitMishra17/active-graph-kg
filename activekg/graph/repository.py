@@ -1590,7 +1590,9 @@ class GraphRepository:
             with open(real, "rb") as f:
                 data = f.read(max_bytes + 1)
             if len(data) > max_bytes:
-                self.logger.warning("File too large; truncated", extra_fields={"path": real, "max_bytes": max_bytes})
+                self.logger.warning(
+                    "File too large; truncated", extra_fields={"path": real, "max_bytes": max_bytes}
+                )
                 data = data[:max_bytes]
             return data.decode("utf-8", errors="ignore")
         except Exception as e:
@@ -1624,6 +1626,7 @@ class GraphRepository:
         """Load text from HTTP/HTTPS URL."""
         try:
             import requests
+
             # Security: SSRF protections
             parsed = urlparse(url)
             if parsed.scheme not in ("http", "https"):
@@ -1647,8 +1650,16 @@ class GraphRepository:
             for addr in addrs:
                 try:
                     ip = ipaddress.ip_address(addr)
-                    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
-                        self.logger.warning("Blocked private/loopback address", extra_fields={"ip": addr})
+                    if (
+                        ip.is_private
+                        or ip.is_loopback
+                        or ip.is_link_local
+                        or ip.is_reserved
+                        or ip.is_multicast
+                    ):
+                        self.logger.warning(
+                            "Blocked private/loopback address", extra_fields={"ip": addr}
+                        )
                         return ""
                 except ValueError:
                     continue
@@ -1670,7 +1681,9 @@ class GraphRepository:
             try:
                 clen = int(r.headers.get("Content-Length", "0"))
                 if clen > 0 and clen > max_bytes:
-                    self.logger.warning("Content-Length too large", extra_fields={"content_length": clen})
+                    self.logger.warning(
+                        "Content-Length too large", extra_fields={"content_length": clen}
+                    )
                     return ""
             except Exception:
                 pass
@@ -1682,7 +1695,10 @@ class GraphRepository:
                     break
                 buf.extend(chunk)
                 if len(buf) > max_bytes:
-                    self.logger.warning("Fetched content exceeded max_bytes; truncated", extra_fields={"max_bytes": max_bytes})
+                    self.logger.warning(
+                        "Fetched content exceeded max_bytes; truncated",
+                        extra_fields={"max_bytes": max_bytes},
+                    )
                     buf = buf[:max_bytes]
                     break
             return bytes(buf).decode("utf-8", errors="ignore")
