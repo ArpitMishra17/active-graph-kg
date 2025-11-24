@@ -279,7 +279,7 @@ class RefreshScheduler:
             from activekg.common.metrics import get_redis_client
             from activekg.connectors.config_store import get_config_store
             from activekg.connectors.cursor_store import get_cursor, set_cursor
-            from activekg.connectors.providers.drive import DriveConnector  # type: ignore
+            from activekg.connectors.providers.drive import DriveConnector
 
             store = get_config_store()
             redis_client = get_redis_client()

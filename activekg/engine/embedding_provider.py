@@ -33,7 +33,7 @@ class EmbeddingProvider:
             self._model = SentenceTransformer(self.model_name, device="cpu")
         elif self.backend == "ollama":
             try:
-                import ollama  # type: ignore
+                import ollama
             except Exception as e:
                 raise ImportError("ollama client not installed") from e
             self._model = ollama
@@ -45,6 +45,7 @@ class EmbeddingProvider:
         if not texts:
             return np.zeros((0, 0), dtype=np.float32)
         self._ensure_model()
+        assert self._model is not None, "Model should be initialized after _ensure_model()"
         if self.backend == "sentence-transformers":
             vecs = self._model.encode(texts, convert_to_numpy=True)
             vecs = vecs.astype(np.float32)
@@ -57,7 +58,7 @@ class EmbeddingProvider:
             vectors: list[list[float]] = []
             for t in texts:
                 res = self._model.embeddings({"model": self.model_name, "prompt": t})
-                vectors.append(res["embedding"])  # type: ignore
+                vectors.append(res["embedding"])
             vecs = np.array(vectors, dtype=np.float32)
             norms = np.linalg.norm(vecs, axis=1, keepdims=True)
             norms = np.where(norms == 0.0, 1.0, norms)

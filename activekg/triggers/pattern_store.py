@@ -49,7 +49,7 @@ class PatternStore:
                     return np.array(row[0], dtype=np.float32)
                 return None
 
-    def list_patterns(self) -> list[dict[str, any]]:
+    def list_patterns(self) -> list[dict[str, Any]]:
         """List all patterns with metadata."""
         with self._conn() as conn:
             with conn.cursor() as cur:
