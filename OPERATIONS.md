@@ -308,7 +308,7 @@ curl -X POST http://prod.example.com/_admin/connectors/rotate_keys \
 **Step 3: Rotate in Batches**
 ```bash
 # For large datasets, rotate in provider batches
-for provider in s3 gcs azure; do
+for provider in s3 gcs drive; do
   echo "Rotating $provider..."
   curl -X POST http://prod.example.com/_admin/connectors/rotate_keys \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
