@@ -156,7 +156,7 @@ def log_performance(operation_name: str, labels: dict[str, str] | None = None):
     def decorator(func):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
-            if PerformanceTimer:
+            if PerformanceTimer is not None:
                 with PerformanceTimer(f"{operation_name}_duration_ms", labels):
                     try:
                         if metrics:
@@ -180,7 +180,7 @@ def log_performance(operation_name: str, labels: dict[str, str] | None = None):
 
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
-            if PerformanceTimer:
+            if PerformanceTimer is not None:
                 with PerformanceTimer(f"{operation_name}_duration_ms", labels):
                     try:
                         if metrics:

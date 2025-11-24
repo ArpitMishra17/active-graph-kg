@@ -10,11 +10,11 @@ import numpy as np
 
 if TYPE_CHECKING:
     import redis
-else:
-    try:
-        import redis as _redis  # type: ignore[no-redef]
-    except Exception:  # pragma: no cover
-        _redis = None  # type: ignore[assignment]
+
+try:
+    import redis as _redis  # type: ignore[no-redef]
+except Exception:  # pragma: no cover
+    _redis = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -144,15 +144,15 @@ def get_redis_client() -> "redis.Redis[bytes]":
     Lazily initializes a singleton client for the process.
     """
     global _redis_client
-    if _redis is None:
+    if _redis is None:  # type: ignore[has-type]
         raise RuntimeError("redis library not installed")
 
     if _redis_client is None:
         url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        _redis_client = _redis.from_url(url)
+        _redis_client = _redis.from_url(url)  # type: ignore[union-attr]
         try:
             _redis_client.ping()
         except Exception:
             # Defer connection errors to caller; client constructed
             pass
-    return _redis_client
+    return _redis_client  # type: ignore[return-value]
