@@ -644,7 +644,9 @@ def main():
     print_info("Generating JWT tokens...")
     import subprocess
 
-    result = subprocess.run(["python3", "scripts/generate_test_jwt.py"], capture_output=True, text=True)
+    result = subprocess.run(
+        ["python3", "scripts/generate_test_jwt.py"], capture_output=True, text=True
+    )
     lines = result.stdout.split("\n")
     for line in lines:
         if "Admin Token:" in line:
