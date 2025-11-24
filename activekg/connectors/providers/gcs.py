@@ -110,7 +110,8 @@ class GCSConnector(BaseConnector):
             return ConnectorStats(exists=False)
         except Exception as e:
             logger.error(
-                f"GCS stat failed for {uri}: {e}", extra_fields={"tenant_id": self.tenant_id, "uri": uri}
+                f"GCS stat failed for {uri}: {e}",
+                extra_fields={"tenant_id": self.tenant_id, "uri": uri},
             )
             raise
 
@@ -161,12 +162,14 @@ class GCSConnector(BaseConnector):
 
         except gcp_exceptions.NotFound as e:
             logger.error(
-                f"GCS object not found: {uri}", extra_fields={"tenant_id": self.tenant_id, "uri": uri}
+                f"GCS object not found: {uri}",
+                extra_fields={"tenant_id": self.tenant_id, "uri": uri},
             )
             raise FileNotFoundError(f"GCS object not found: {uri}") from e
         except Exception as e:
             logger.error(
-                f"GCS fetch failed for {uri}: {e}", extra_fields={"tenant_id": self.tenant_id, "uri": uri}
+                f"GCS fetch failed for {uri}: {e}",
+                extra_fields={"tenant_id": self.tenant_id, "uri": uri},
             )
             raise
 
@@ -293,7 +296,9 @@ class GCSConnector(BaseConnector):
                     except Exception:
                         continue
         except Exception as e:
-            logger.warning(f"PDF extraction failed: {e}", extra_fields={"tenant_id": self.tenant_id})
+            logger.warning(
+                f"PDF extraction failed: {e}", extra_fields={"tenant_id": self.tenant_id}
+            )
 
         return "\n".join(t for t in txt if t)
 
@@ -304,7 +309,9 @@ class GCSConnector(BaseConnector):
             doc = DocxDocument(bio)
             return "\n".join(p.text for p in doc.paragraphs if p.text)
         except Exception as e:
-            logger.warning(f"DOCX extraction failed: {e}", extra_fields={"tenant_id": self.tenant_id})
+            logger.warning(
+                f"DOCX extraction failed: {e}", extra_fields={"tenant_id": self.tenant_id}
+            )
             return ""
 
     def _html_to_text(self, data: bytes) -> str:
@@ -320,5 +327,7 @@ class GCSConnector(BaseConnector):
             text = soup.get_text(" ")
             return " ".join(text.split())
         except Exception as e:
-            logger.warning(f"HTML extraction failed: {e}", extra_fields={"tenant_id": self.tenant_id})
+            logger.warning(
+                f"HTML extraction failed: {e}", extra_fields={"tenant_id": self.tenant_id}
+            )
             return ""

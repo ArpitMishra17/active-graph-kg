@@ -132,7 +132,9 @@ def _send_to_dlq(
 
     # Update metrics
     dlq_total.labels(provider=provider, tenant=tenant_id, reason=reason).inc()
-    dlq_depth.labels(provider=provider, tenant=tenant_id).set(float(cast(int, redis_client.llen(dlq_key))))
+    dlq_depth.labels(provider=provider, tenant=tenant_id).set(
+        float(cast(int, redis_client.llen(dlq_key)))
+    )
 
     logger.error(f"Sent to DLQ: {dlq_key} - {operation} - {error}")
 

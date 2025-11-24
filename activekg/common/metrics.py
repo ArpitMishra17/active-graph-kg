@@ -29,7 +29,9 @@ class MetricsCollector:
 
     def __init__(self, max_history: int = 1000):
         self.max_history = max_history
-        self._metrics: dict[str, deque[MetricPoint]] = defaultdict(lambda: deque(maxlen=max_history))
+        self._metrics: dict[str, deque[MetricPoint]] = defaultdict(
+            lambda: deque(maxlen=max_history)
+        )
         self._counters: dict[str, float] = defaultdict(float)
         self._gauges: dict[str, float] = defaultdict(float)
         self._histograms: dict[str, list[float]] = defaultdict(list)

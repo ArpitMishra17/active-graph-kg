@@ -452,7 +452,7 @@ def health() -> HealthCheckResponse:
     )
 
 
-@app.get("/_admin/connectors/cache/health")
+@app.get("/_admin/connectors/cache/health", response_model=None)
 def connector_cache_health(claims: JWTClaims | None = Depends(get_jwt_claims)) -> dict[str, Any]:
     """Health endpoint for connector cache subscriber.
 
@@ -476,7 +476,7 @@ def connector_cache_health(claims: JWTClaims | None = Depends(get_jwt_claims)) -
     return {"status": status, "subscriber": subscriber_health}
 
 
-@app.post("/_admin/connectors/rotate_keys")
+@app.post("/_admin/connectors/rotate_keys", response_model=None)
 def connector_rotate_keys(
     request: RotateKeysRequest, claims: JWTClaims | None = Depends(get_jwt_claims)
 ) -> dict[str, Any]:
@@ -515,7 +515,7 @@ def connector_rotate_keys(
         raise HTTPException(status_code=500, detail=f"Key rotation failed: {str(e)}")
 
 
-@app.get("/_admin/security/limits")
+@app.get("/_admin/security/limits", response_model=None)
 def get_security_limits(claims: JWTClaims | None = Depends(get_jwt_claims)) -> dict[str, Any]:
     """Get configured security limits and SSRF protection settings.
 
@@ -576,8 +576,11 @@ def get_security_limits(claims: JWTClaims | None = Depends(get_jwt_claims)) -> d
     }
 
 
-@app.get("/debug/dbinfo")
-def debug_dbinfo(http_request: Request | None = None, claims: JWTClaims | None = Depends(get_jwt_claims)):
+@app.get("/debug/dbinfo", response_model=None)
+def debug_dbinfo(
+    http_request: Request,
+    claims: JWTClaims | None = Depends(get_jwt_claims),
+):
     """Debug endpoint to inspect DB and tenant context.
 
     Security:
@@ -626,10 +629,8 @@ def debug_dbinfo(http_request: Request | None = None, claims: JWTClaims | None =
         raise HTTPException(status_code=500, detail=f"dbinfo error: {str(e)}")
 
 
-@app.get("/debug/search_sanity")
-def debug_search_sanity(
-    http_request: Request | None = None, claims: JWTClaims | None = Depends(get_jwt_claims)
-):
+@app.get("/debug/search_sanity", response_model=None)
+def debug_search_sanity(http_request: Request, claims: JWTClaims | None = Depends(get_jwt_claims)):
     """Debug endpoint for retrieval sanity checks.
 
     Returns node counts, embedding coverage, and sample nodes to help
@@ -725,12 +726,12 @@ def debug_search_sanity(
         raise HTTPException(status_code=500, detail=f"search_sanity error: {str(e)}")
 
 
-@app.post("/debug/search_explain")
+@app.post("/debug/search_explain", response_model=None)
 def debug_search_explain(
+    http_request: Request,
     query: str = Body(..., embed=True),
     use_hybrid: bool = Body(False, embed=True),
     top_k: int = Body(5, embed=True),
-    http_request: Request | None = None,
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Debug endpoint for detailed search result triage.
@@ -890,10 +891,8 @@ def debug_search_explain(
         raise HTTPException(status_code=500, detail=f"search_explain error: {str(e)}")
 
 
-@app.get("/debug/embed_info")
-def debug_embed_info(
-    http_request: Request | None = None, claims: JWTClaims | None = Depends(get_jwt_claims)
-):
+@app.get("/debug/embed_info", response_model=None)
+def debug_embed_info(http_request: Request, claims: JWTClaims | None = Depends(get_jwt_claims)):
     """Debug endpoint to inspect embedding configuration and stored vectors.
 
     Security:
@@ -1056,7 +1055,7 @@ def debug_embed_info(
         raise HTTPException(status_code=500, detail=f"embed_info error: {str(e)}")
 
 
-@app.get("/debug/intent")
+@app.get("/debug/intent", response_model=None)
 def debug_intent(q: str):
     """Debug endpoint to test intent detection without running full /ask.
 
@@ -1157,7 +1156,7 @@ def _background_embed(node_id: str, tenant_id: str | None = None):
         logger.error("Background embed failed", extra_fields={"node_id": node_id, "error": str(e)})
 
 
-@app.post("/nodes")
+@app.post("/nodes", response_model=None)
 def create_node(
     node: NodeCreate,
     background_tasks: BackgroundTasks,
@@ -1200,12 +1199,12 @@ def create_node(
     return {"id": node_id}
 
 
-@app.get("/nodes/{node_id}")
+@app.get("/nodes/{node_id}", response_model=None)
 def get_node(
     node_id: str,
+    http_request: Request,
+    http_response: Response,
     tenant_id: str | None = None,
-    http_request: Request | None = None,
-    http_response: Response | None = None,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
@@ -1220,7 +1219,6 @@ def get_node(
     if JWT_ENABLED and claims:
         effective_tenant_id = claims.tenant_id
     else:
-
         effective_tenant_id = tenant_id if tenant_id else "default"  # Dev mode only
 
     n = repo.get_node(node_id, tenant_id=effective_tenant_id)
@@ -1399,13 +1397,13 @@ def demo_page():
     """
 
 
-@app.post("/nodes/{node_id}/refresh")
+@app.post("/nodes/{node_id}/refresh", response_model=None)
 def refresh_node(
     node_id: str,
+    http_request: Request,
+    http_response: Response,
     tenant_id: str | None = None,
     _rl: None = Depends(require_rate_limit("default")),
-    http_request: Request | None = None,
-    http_response: Response | None = None,
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Manually refresh a single node's embedding and write history/events.
@@ -1427,7 +1425,6 @@ def refresh_node(
         effective_tenant_id = claims.tenant_id
         actor_id = claims.actor_id
     else:
-
         effective_tenant_id = tenant_id if tenant_id else "default"  # Dev mode only
         actor_id = "dev_user"
 
@@ -1472,11 +1469,11 @@ def refresh_node(
         raise HTTPException(status_code=500, detail=f"Node refresh failed: {str(e)}")
 
 
-@app.post("/search")
+@app.post("/search", response_model=None)
 def search_nodes(
-    search_request: KGSearchRequest,
     http_request: Request,
     http_response: Response,
+    search_request: KGSearchRequest,
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Semantic search across knowledge graph nodes using pgvector.
@@ -1506,7 +1503,9 @@ def search_nodes(
         if JWT_ENABLED and claims:
             effective_tenant_id = claims.tenant_id
         else:
-            effective_tenant_id = search_request.tenant_id if search_request.tenant_id else "default"  # Dev mode only
+            effective_tenant_id = (
+                search_request.tenant_id if search_request.tenant_id else "default"
+            )  # Dev mode only
 
         # Apply rate limiting with headers
         if RATE_LIMIT_ENABLED:
@@ -2552,12 +2551,12 @@ async def ask_stream(
     return StreamingResponse(gen(), media_type="text/event-stream", headers=rl_headers)
 
 
-@app.post("/edges")
+@app.post("/edges", response_model=None)
 def create_edge(
+    http_request: Request,
+    http_response: Response,
     edge: EdgeCreate,
     _rl: None = Depends(require_rate_limit("default")),
-    http_request: Request | None = None,
-    http_response: Response | None = None,
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Create a relationship between two nodes with validated input.
@@ -2589,12 +2588,12 @@ def create_edge(
         raise HTTPException(status_code=500, detail=f"Edge creation failed: {str(ex)}")
 
 
-@app.post("/triggers")
+@app.post("/triggers", response_model=None)
 def register_trigger_pattern(
+    http_request: Request,
+    http_response: Response,
     pattern: dict[str, Any],
     _rl: None = Depends(require_rate_limit("default")),
-    http_request: Request | None = None,
-    http_response: Response | None = None,
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Register a semantic trigger pattern.
@@ -2634,10 +2633,10 @@ def register_trigger_pattern(
         raise HTTPException(status_code=500, detail=f"Pattern registration failed: {str(e)}")
 
 
-@app.get("/triggers")
+@app.get("/triggers", response_model=None)
 def list_trigger_patterns(
-    http_request: Request | None = None,
-    http_response: Response | None = None,
+    http_request: Request,
+    http_response: Response,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
@@ -2656,12 +2655,12 @@ def list_trigger_patterns(
         raise HTTPException(status_code=500, detail=f"Pattern listing failed: {str(e)}")
 
 
-@app.delete("/triggers/{name}")
+@app.delete("/triggers/{name}", response_model=None)
 def delete_trigger_pattern(
     name: str,
+    http_request: Request,
+    http_response: Response,
     _rl: None = Depends(require_rate_limit("default")),
-    http_request: Request | None = None,
-    http_response: Response | None = None,
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Delete a trigger pattern by name.
@@ -2686,14 +2685,14 @@ def delete_trigger_pattern(
         raise HTTPException(status_code=500, detail=f"Pattern deletion failed: {str(e)}")
 
 
-@app.get("/events")
+@app.get("/events", response_model=None)
 def list_events(
+    http_request: Request,
+    http_response: Response,
     node_id: str | None = None,
     event_type: str | None = None,
     tenant_id: str | None = None,
     limit: int = 100,
-    http_request: Request | None = None,
-    http_response: Response | None = None,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
@@ -2708,7 +2707,6 @@ def list_events(
     if JWT_ENABLED and claims:
         effective_tenant_id = claims.tenant_id
     else:
-
         effective_tenant_id = tenant_id if tenant_id else "default"  # Dev mode only
 
     try:
@@ -2749,13 +2747,13 @@ def list_events(
         raise HTTPException(status_code=500, detail=f"Event listing failed: {str(e)}")
 
 
-@app.get("/lineage/{node_id}")
+@app.get("/lineage/{node_id}", response_model=None)
 def get_lineage(
     node_id: str,
+    http_request: Request,
+    http_response: Response,
     max_depth: int = 5,
     tenant_id: str | None = None,
-    http_request: Request | None = None,
-    http_response: Response | None = None,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
@@ -2772,7 +2770,6 @@ def get_lineage(
     if JWT_ENABLED and claims:
         effective_tenant_id = claims.tenant_id
     else:
-
         effective_tenant_id = tenant_id if tenant_id else "default"  # Dev mode only
 
     try:
@@ -2789,11 +2786,11 @@ def get_lineage(
 
 @app.post("/admin/refresh")
 async def admin_refresh(
+    http_request: Request,
+    http_response: Response,
     payload: Any | None = Body(
         default=None, description='Either ["id", ...] or {"node_ids": ["id", ...]}'
     ),
-    http_request: Request | None = None,
-    http_response: Response | None = None,
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Trigger on-demand refresh cycle.
@@ -2918,16 +2915,16 @@ async def admin_refresh(
         raise HTTPException(status_code=500, detail=f"Admin refresh failed: {str(e)}")
 
 
-@app.get("/admin/anomalies")
+@app.get("/admin/anomalies", response_model=None)
 def get_anomalies(
+    http_request: Request,
+    http_response: Response,
     types: str | None = None,
     lookback_hours: int = 24,
     drift_spike_threshold: float = 2.0,
     trigger_storm_threshold: int = 50,
     scheduler_lag_multiplier: float = 2.0,
     tenant_id: str | None = None,
-    http_request: Request | None = None,
-    http_response: Response | None = None,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
@@ -3001,12 +2998,12 @@ def get_anomalies(
         raise HTTPException(status_code=500, detail=f"Anomaly detection failed: {str(e)}")
 
 
-@app.get("/nodes/{node_id}/versions")
+@app.get("/nodes/{node_id}/versions", response_model=None)
 def get_node_versions(
     node_id: str,
+    http_request: Request,
+    http_response: Response,
     limit: int = 10,
-    http_request: Request | None = None,
-    http_response: Response | None = None,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
