@@ -1,10 +1,10 @@
 site_name: Active Graph KG
 site_description: Active, self-improving knowledge graph with semantic search and LLM Q&A
 site_author: Active Graph KG Team
-site_url: https://yourusername.github.io/active-graph-kg
+site_url: https://puneetrinity.github.io/active-graph-kg
 
 repo_name: active-graph-kg
-repo_url: https://github.com/yourusername/active-graph-kg
+repo_url: https://github.com/puneetrinity/active-graph-kg
 edit_uri: edit/main/docs/
 
 theme:
@@ -71,6 +71,6 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/yourusername/active-graph-kg
-  version:
-    provider: mike  # Optional: for versioned docs
+      link: https://github.com/puneetrinity/active-graph-kg
+  # version:
+  #   provider: mike  # Optional: for versioned docs (requires mike package)

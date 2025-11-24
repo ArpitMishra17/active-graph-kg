@@ -104,7 +104,7 @@ Active Graph KG is a **self-improving knowledge graph** that combines:
 
 ```bash
 # Clone and setup
-git clone https://github.com/yourusername/active-graph-kg.git
+git clone https://github.com/puneetrinity/active-graph-kg.git
 cd active-graph-kg
 python3 -m venv venv
 source venv/bin/activate
@@ -246,7 +246,9 @@ See **[Architecture Guide](development/architecture.md)** for detailed component
 
 ## License
 
-[Your License Here - e.g., MIT, Apache 2.0]
+This project is licensed under the **MIT License** - see the [LICENSE](https://github.com/puneetrinity/active-graph-kg/blob/main/LICENSE) file for details.
+
+For commercial use and enterprise support, see [LICENSE-ENTERPRISE.md](https://github.com/puneetrinity/active-graph-kg/blob/main/LICENSE-ENTERPRISE.md).
 
 ---
 
