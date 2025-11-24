@@ -578,7 +578,6 @@ def get_security_limits(claims: JWTClaims | None = Depends(get_jwt_claims)) -> d
 
 @app.get("/debug/dbinfo", response_model=None)
 def debug_dbinfo(
-    http_request: Request,
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Debug endpoint to inspect DB and tenant context.
@@ -630,7 +629,7 @@ def debug_dbinfo(
 
 
 @app.get("/debug/search_sanity", response_model=None)
-def debug_search_sanity(http_request: Request, claims: JWTClaims | None = Depends(get_jwt_claims)):
+def debug_search_sanity(claims: JWTClaims | None = Depends(get_jwt_claims)):
     """Debug endpoint for retrieval sanity checks.
 
     Returns node counts, embedding coverage, and sample nodes to help
@@ -728,7 +727,6 @@ def debug_search_sanity(http_request: Request, claims: JWTClaims | None = Depend
 
 @app.post("/debug/search_explain", response_model=None)
 def debug_search_explain(
-    http_request: Request,
     query: str = Body(..., embed=True),
     use_hybrid: bool = Body(False, embed=True),
     top_k: int = Body(5, embed=True),
@@ -892,7 +890,7 @@ def debug_search_explain(
 
 
 @app.get("/debug/embed_info", response_model=None)
-def debug_embed_info(http_request: Request, claims: JWTClaims | None = Depends(get_jwt_claims)):
+def debug_embed_info(claims: JWTClaims | None = Depends(get_jwt_claims)):
     """Debug endpoint to inspect embedding configuration and stored vectors.
 
     Security:
@@ -1202,8 +1200,6 @@ def create_node(
 @app.get("/nodes/{node_id}", response_model=None)
 def get_node(
     node_id: str,
-    http_request: Request,
-    http_response: Response,
     tenant_id: str | None = None,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
@@ -1400,8 +1396,6 @@ def demo_page():
 @app.post("/nodes/{node_id}/refresh", response_model=None)
 def refresh_node(
     node_id: str,
-    http_request: Request,
-    http_response: Response,
     tenant_id: str | None = None,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
@@ -1851,9 +1845,9 @@ def should_use_fast_path(
 
 @app.post("/ask")
 async def ask_question(
-    request: AskRequest,
     http_request: Request,
     http_response: Response,
+    request: AskRequest,
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """LLM-powered Q&A with grounded citations from knowledge graph.
@@ -2358,9 +2352,9 @@ async def ask_question(
 
 @app.post("/ask/stream")
 async def ask_stream(
-    request: AskRequest,
     http_request: Request,
     http_response: Response,
+    request: AskRequest,
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
     """Server-Sent Events streaming for LLM Q&A with citations.
@@ -2553,8 +2547,6 @@ async def ask_stream(
 
 @app.post("/edges", response_model=None)
 def create_edge(
-    http_request: Request,
-    http_response: Response,
     edge: EdgeCreate,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
@@ -2590,8 +2582,6 @@ def create_edge(
 
 @app.post("/triggers", response_model=None)
 def register_trigger_pattern(
-    http_request: Request,
-    http_response: Response,
     pattern: dict[str, Any],
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
@@ -2635,8 +2625,6 @@ def register_trigger_pattern(
 
 @app.get("/triggers", response_model=None)
 def list_trigger_patterns(
-    http_request: Request,
-    http_response: Response,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
@@ -2658,8 +2646,6 @@ def list_trigger_patterns(
 @app.delete("/triggers/{name}", response_model=None)
 def delete_trigger_pattern(
     name: str,
-    http_request: Request,
-    http_response: Response,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
 ):
@@ -2687,8 +2673,6 @@ def delete_trigger_pattern(
 
 @app.get("/events", response_model=None)
 def list_events(
-    http_request: Request,
-    http_response: Response,
     node_id: str | None = None,
     event_type: str | None = None,
     tenant_id: str | None = None,
@@ -2750,8 +2734,6 @@ def list_events(
 @app.get("/lineage/{node_id}", response_model=None)
 def get_lineage(
     node_id: str,
-    http_request: Request,
-    http_response: Response,
     max_depth: int = 5,
     tenant_id: str | None = None,
     _rl: None = Depends(require_rate_limit("default")),
@@ -2917,8 +2899,6 @@ async def admin_refresh(
 
 @app.get("/admin/anomalies", response_model=None)
 def get_anomalies(
-    http_request: Request,
-    http_response: Response,
     types: str | None = None,
     lookback_hours: int = 24,
     drift_spike_threshold: float = 2.0,
@@ -3001,8 +2981,6 @@ def get_anomalies(
 @app.get("/nodes/{node_id}/versions", response_model=None)
 def get_node_versions(
     node_id: str,
-    http_request: Request,
-    http_response: Response,
     limit: int = 10,
     _rl: None = Depends(require_rate_limit("default")),
     claims: JWTClaims | None = Depends(get_jwt_claims),
