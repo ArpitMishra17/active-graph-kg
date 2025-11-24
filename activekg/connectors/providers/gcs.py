@@ -2,7 +2,6 @@
 
 import io
 import json
-import logging
 import os
 from typing import Any
 
@@ -12,9 +11,10 @@ from docx import Document as DocxDocument
 from google.api_core import exceptions as gcp_exceptions
 from google.cloud import storage
 
+from activekg.common.logger import get_enhanced_logger
 from activekg.connectors.base import BaseConnector, ChangeItem, ConnectorStats, FetchResult
 
-logger = logging.getLogger(__name__)
+logger = get_enhanced_logger(__name__)
 
 
 def _parse_gcs_uri(uri: str) -> tuple[str, str]:
@@ -62,10 +62,12 @@ class GCSConnector(BaseConnector):
 
         logger.info(
             "GCS connector initialized",
-            tenant_id=tenant_id,
-            bucket=config.get("bucket"),
-            prefix=config.get("prefix", ""),
-            project=project or "default",
+            extra_fields={
+                "tenant_id": tenant_id,
+                "bucket": config.get("bucket"),
+                "prefix": config.get("prefix", ""),
+                "project": project or "default",
+            },
         )
 
     def stat(self, uri: str) -> ConnectorStats:
@@ -107,7 +109,9 @@ class GCSConnector(BaseConnector):
         except gcp_exceptions.NotFound:
             return ConnectorStats(exists=False)
         except Exception as e:
-            logger.error(f"GCS stat failed for {uri}: {e}", tenant_id=self.tenant_id, uri=uri)
+            logger.error(
+                f"GCS stat failed for {uri}: {e}", extra_fields={"tenant_id": self.tenant_id, "uri": uri}
+            )
             raise
 
     def fetch_text(self, uri: str) -> FetchResult:
@@ -145,19 +149,25 @@ class GCSConnector(BaseConnector):
 
             logger.info(
                 "GCS fetch successful",
-                tenant_id=self.tenant_id,
-                uri=uri,
-                text_length=len(text),
-                content_type=content_type,
+                extra_fields={
+                    "tenant_id": self.tenant_id,
+                    "uri": uri,
+                    "text_length": len(text),
+                    "content_type": content_type,
+                },
             )
 
             return FetchResult(text=text, title=title, metadata=metadata)
 
         except gcp_exceptions.NotFound as e:
-            logger.error(f"GCS object not found: {uri}", tenant_id=self.tenant_id, uri=uri)
+            logger.error(
+                f"GCS object not found: {uri}", extra_fields={"tenant_id": self.tenant_id, "uri": uri}
+            )
             raise FileNotFoundError(f"GCS object not found: {uri}") from e
         except Exception as e:
-            logger.error(f"GCS fetch failed for {uri}: {e}", tenant_id=self.tenant_id, uri=uri)
+            logger.error(
+                f"GCS fetch failed for {uri}: {e}", extra_fields={"tenant_id": self.tenant_id, "uri": uri}
+            )
             raise
 
     def list_changes(self, cursor: str | None = None) -> tuple[list[ChangeItem], str | None]:
@@ -186,7 +196,8 @@ class GCSConnector(BaseConnector):
                 page_token = data.get("page_token")
             except Exception as e:
                 logger.warning(
-                    f"Invalid cursor format: {e}", tenant_id=self.tenant_id, cursor=cursor
+                    f"Invalid cursor format: {e}",
+                    extra_fields={"tenant_id": self.tenant_id, "cursor": cursor},
                 )
 
         try:
@@ -226,11 +237,13 @@ class GCSConnector(BaseConnector):
 
             logger.info(
                 "GCS list_changes complete",
-                tenant_id=self.tenant_id,
-                bucket=bucket_name,
-                prefix=prefix,
-                changes_count=len(changes),
-                has_more=next_cursor is not None,
+                extra_fields={
+                    "tenant_id": self.tenant_id,
+                    "bucket": bucket_name,
+                    "prefix": prefix,
+                    "changes_count": len(changes),
+                    "has_more": next_cursor is not None,
+                },
             )
 
             return changes, next_cursor
@@ -238,9 +251,7 @@ class GCSConnector(BaseConnector):
         except Exception as e:
             logger.error(
                 f"GCS list_changes failed: {e}",
-                tenant_id=self.tenant_id,
-                bucket=bucket_name,
-                prefix=prefix,
+                extra_fields={"tenant_id": self.tenant_id, "bucket": bucket_name, "prefix": prefix},
             )
             raise
 
@@ -282,7 +293,7 @@ class GCSConnector(BaseConnector):
                     except Exception:
                         continue
         except Exception as e:
-            logger.warning(f"PDF extraction failed: {e}", tenant_id=self.tenant_id)
+            logger.warning(f"PDF extraction failed: {e}", extra_fields={"tenant_id": self.tenant_id})
 
         return "\n".join(t for t in txt if t)
 
@@ -293,7 +304,7 @@ class GCSConnector(BaseConnector):
             doc = DocxDocument(bio)
             return "\n".join(p.text for p in doc.paragraphs if p.text)
         except Exception as e:
-            logger.warning(f"DOCX extraction failed: {e}", tenant_id=self.tenant_id)
+            logger.warning(f"DOCX extraction failed: {e}", extra_fields={"tenant_id": self.tenant_id})
             return ""
 
     def _html_to_text(self, data: bytes) -> str:
@@ -309,5 +320,5 @@ class GCSConnector(BaseConnector):
             text = soup.get_text(" ")
             return " ".join(text.split())
         except Exception as e:
-            logger.warning(f"HTML extraction failed: {e}", tenant_id=self.tenant_id)
+            logger.warning(f"HTML extraction failed: {e}", extra_fields={"tenant_id": self.tenant_id})
             return ""
