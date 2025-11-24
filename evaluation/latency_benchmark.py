@@ -251,9 +251,9 @@ def run_latency_benchmarks(
                 "std": float(std),
             },
             "throughput": float(throughput),
-            "success_rate": len(latencies) / num_requests,
-            "sla_p95": sla_p95,
-            "meets_sla": meets_sla,
+            "success_rate": float(len(latencies) / num_requests),
+            "sla_p95": float(sla_p95),
+            "meets_sla": bool(meets_sla),
         }
 
     # Summary
