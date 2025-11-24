@@ -1,6 +1,6 @@
 # Active Graph KG - System Architecture
 
-**Last Updated:** 2025-11-11
+**Last Updated:** 2025-11-24
 **Version:** 1.0
 **Status:** Production
 

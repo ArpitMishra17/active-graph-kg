@@ -21,7 +21,7 @@ Both support “near one‑click” via the Deploy button and minimal env setup.
 Add this badge to your repo README (already included in the main README section if you choose to):
 
 ```md
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?templateUrl=<your-repo-url>)
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?templateUrl=https://github.com/puneetrinity/active-graph-kg)
 ```
 
 When Railway imports the repo, it will use Nixpacks or the provided Dockerfile/Procfile to build the API.

@@ -252,5 +252,5 @@ For commercial use and enterprise support, see [LICENSE-ENTERPRISE.md](https://g
 
 ---
 
-**Last Updated:** 2025-11-11  
+**Last Updated:** 2025-11-24  
 **Documentation Version:** 1.0.0

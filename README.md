@@ -12,9 +12,9 @@
 
 **Status:** ✅ Production Ready
 **Version:** 1.0.0
-**Last Updated:** 2025-11-17
+**Last Updated:** 2025-11-24
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?templateUrl=<your-repo-url>)
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?templateUrl=https://github.com/puneetrinity/active-graph-kg)
 
 > **Dual ANN** (IVFFLAT/HNSW), **RLS**, **admin tooling**, **metrics**, and **proof scripts** are in place.
 
@@ -461,17 +461,22 @@ Integrate with Prometheus + Grafana for dashboards and alerts.
 
 ---
 
-## API Endpoints (12 Total)
+## API Endpoints (30+ Total)
 
 ### Core
 - `GET /health` - Health check with version
 - `GET /metrics` - Metrics in JSON format
 - `GET /prometheus` - Metrics in Prometheus format
+- `GET /demo` - Demo page with sample data
 
 ### Nodes & Search
 - `POST /nodes` - Create node
 - `GET /nodes/{node_id}` - Get node by ID
+- `POST /nodes/{node_id}/refresh` - Manually refresh a specific node
+- `GET /nodes/{node_id}/versions` - Get version history for a node
 - `POST /search` - Vector search with compound filters
+- `POST /ask` - Q&A with RAG and citations
+- `POST /ask/stream` - Streaming Q&A with SSE
 
 ### Edges & Lineage
 - `POST /edges` - Create relationship
@@ -485,19 +490,30 @@ Integrate with Prometheus + Grafana for dashboards and alerts.
 ### Events
 - `GET /events` - List events with filters
 
-### Admin
+### Admin & Operations
 - `POST /admin/refresh` - Trigger on-demand refresh
-- `POST /admin/indexes` - List/ensure/rebuild/drop ANN indexes (IVFFLAT/HNSW)
-- `GET /_admin/embed_info` - Embedding health (alias of /debug/embed_info)
-- `GET /_admin/embed_class_coverage` - Per-class embedding coverage (RLS‑scoped)
-- `GET /_admin/metrics_summary` - Scheduler/trigger snapshots
-- `GET /_admin/drift_histogram` - Drift distribution (bucketed)
+- `GET /admin/anomalies` - Detect anomalies in node embeddings
+- `GET /_admin/security/limits` - Get security configuration and limits
+- `POST /_admin/connectors/rotate_keys` - Rotate connector encryption keys
+- `GET /_admin/connectors/cache/health` - Check connector cache health
 
-### Debug
+### Connectors (Admin)
+- `POST /_admin/connectors/configs` - Create connector configuration
+- `GET /_admin/connectors/configs` - List all connector configs
+- `GET /_admin/connectors/configs/{config_id}` - Get specific config
+- `PUT /_admin/connectors/configs/{config_id}` - Update config
+- `DELETE /_admin/connectors/configs/{config_id}` - Delete config
+- `POST /_admin/connectors/configs/{config_id}/test` - Test connection
+- `POST /_admin/connectors/configs/{config_id}/sync` - Trigger manual sync
+- `GET /_admin/connectors/runs` - List connector run history
+- `GET /_admin/connectors/runs/{run_id}` - Get specific run details
+
+### Debug & Diagnostics
 - `GET /debug/embed_info` - Embedding backend status
 - `GET /debug/search_explain` - Query plan analysis
 - `GET /debug/search_sanity` - Sanity checks
 - `GET /debug/dbinfo` - Database metadata
+- `GET /debug/intent` - Intent classification for queries
 
 ### Governance Metrics
 - `activekg_access_violations_total{type}` - missing_token, scope_denied, cross_tenant_query
@@ -567,7 +583,7 @@ active-graph-kg/
 
 ## Deploy on Railway (Self‑Serve Demo)
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?templateUrl=<your-repo-url>)
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?templateUrl=https://github.com/puneetrinity/active-graph-kg)
 
 After deploy, set variables in Railway → Variables:
 - `ACTIVEKG_DSN` (Postgres with pgvector). Optional if you added the Railway Postgres plugin — the app will fall back to `DATABASE_URL` automatically.
@@ -1062,9 +1078,9 @@ Summary
 
 ## Support
 
-- **Issues:** [GitHub Issues](https://github.com/yourusername/active-graph-kg/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/yourusername/active-graph-kg/discussions)
-- **Email:** [your.email@example.com]
+- **Issues:** [GitHub Issues](https://github.com/puneetrinity/active-graph-kg/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/puneetrinity/active-graph-kg/discussions)
+- **Documentation:** [Active Graph KG Docs](https://puneetrinity.github.io/active-graph-kg/)
 
 ---
 

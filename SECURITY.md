@@ -22,9 +22,12 @@ We take the security of Active Graph KG seriously. If you discover a security vu
 
 Security vulnerabilities should be reported privately to prevent exploitation before a fix is available.
 
-### 2. **Email us directly**
+### 2. **Report via GitHub Security Advisories**
 
-Send your report to: **security@[yourdomain.com]** (replace with actual email)
+Use GitHub's private security reporting:
+**[Report a vulnerability](https://github.com/puneetrinity/active-graph-kg/security/advisories/new)**
+
+Alternatively, open a confidential issue or contact via GitHub discussions.
 
 Include the following information:
 - Description of the vulnerability
@@ -285,12 +288,13 @@ Before deploying to production, verify:
 ## Contact
 
 For security inquiries:
-- **Email:** security@[yourdomain.com]
+- **GitHub Security Advisories:** [Report a vulnerability](https://github.com/puneetrinity/active-graph-kg/security/advisories/new)
 - **Response Time:** Within 48 hours
-- **PGP Key:** [Link to public key] (optional)
+- **Alternative:** Contact via GitHub Discussions for private security concerns
 
 For general questions:
 - **GitHub Issues:** https://github.com/puneetrinity/active-graph-kg/issues
+- **GitHub Discussions:** https://github.com/puneetrinity/active-graph-kg/discussions
 - **Documentation:** https://puneetrinity.github.io/active-graph-kg/
 
 ---

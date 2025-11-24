@@ -71,7 +71,7 @@ class RotateKeysRequest(BaseModel):
     dry_run: bool = False
 
 
-APP_VERSION = os.getenv("ACTIVEKG_VERSION", "0.1.0")
+APP_VERSION = os.getenv("ACTIVEKG_VERSION", "1.0.0")
 # Prefer ACTIVEKG_DSN; fall back to DATABASE_URL for PaaS (e.g., Railway Postgres plugin)
 DSN = env_str(
     ["ACTIVEKG_DSN", "DATABASE_URL"], "postgresql://activekg:activekg@localhost:5432/activekg"

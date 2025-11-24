@@ -108,7 +108,7 @@ Returns runtime configuration and scheduler/trigger snapshots:
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "1.0.0",
   "rate_limit_enabled": false,
   "scheduler_enabled": true,
   "triggers": {

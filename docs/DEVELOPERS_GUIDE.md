@@ -87,7 +87,7 @@ mkdocs serve
 **GitHub Pages deployment:**
 - Ensure repository settings: Settings → Pages → Source = "GitHub Actions"
 - Push to main branch triggers automatic deployment
-- Site will be available at `https://yourusername.github.io/active-graph-kg`
+- Site will be available at `https://puneetrinity.github.io/active-graph-kg`
 
 **Optional Material theme:**
 - Uncomment `theme.name: material` in `mkdocs.yml`
@@ -107,5 +107,5 @@ Planned improvements for the documentation system:
 
 ---
 
-**Last Updated:** 2025-11-06
+**Last Updated:** 2025-11-24
 **Documentation Version:** 1.0.0

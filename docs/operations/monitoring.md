@@ -1,7 +1,7 @@
 # Monitoring & Observability Guide - Active Graph KG
 
 **Status**: ✅ Production Ready
-**Last Updated**: 2025-11-07
+**Last Updated:** 2025-11-24
 
 ---
 

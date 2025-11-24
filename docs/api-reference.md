@@ -87,8 +87,8 @@ Health check endpoint with system status.
 ```json
 {
   "status": "ok",
-  "timestamp": "2025-11-11T12:00:00Z",
-  "version": "0.1.0",
+  "timestamp": "2025-11-24T12:00:00Z",
+  "version": "1.0.0",
   "uptime_seconds": 3600.0,
   "components": {
     "db": {"status": "unknown"}
@@ -1728,12 +1728,12 @@ Use `/ask` metadata to diagnose quality issues:
 ## Support
 
 For issues and questions:
-- GitHub: [Active Graph KG](https://github.com/your-org/active-graph-kg)
-- Email: support@activekg.io
-- Docs: https://docs.activekg.io
+- **GitHub Issues:** [Active Graph KG](https://github.com/puneetrinity/active-graph-kg/issues)
+- **GitHub Discussions:** [Community](https://github.com/puneetrinity/active-graph-kg/discussions)
+- **Documentation:** [Active Graph KG Docs](https://puneetrinity.github.io/active-graph-kg/)
 
 ---
 
-**Generated:** 2025-11-11
-**Version:** 0.1.0
+**Generated:** 2025-11-24
+**Version:** 1.0.0
 **License:** MIT

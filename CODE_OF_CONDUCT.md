@@ -61,7 +61,7 @@ representative at an online or offline event.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at:
 
-**Email:** conduct@[yourdomain.com] *(please update with actual email)*
+**GitHub:** [Report via GitHub Discussions](https://github.com/puneetrinity/active-graph-kg/discussions) or contact repository maintainers directly
 
 All complaints will be reviewed and investigated promptly and fairly.
 
