@@ -124,9 +124,7 @@ class ConnectorWorker:
             logger.error(f"Failed to load {provider} config for {tenant_id}: {e}")
             return None
 
-    def _build_connector(
-        self, provider: ConnectorProvider, tenant_id: str, config: dict[str, Any]
-    ):
+    def _build_connector(self, provider: ConnectorProvider, tenant_id: str, config: dict[str, Any]):
         """Instantiate the right connector for the provider."""
         if provider == "s3":
             return S3Connector(tenant_id=tenant_id, config=config)
