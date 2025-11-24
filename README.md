@@ -39,6 +39,26 @@ Unlike traditional knowledge graphs, Active Graph KG **actively maintains itself
 
 ---
 
+## Supported Connectors
+
+Active Graph KG automatically syncs content from cloud storage:
+
+| Provider | Status | Documentation |
+|----------|--------|---------------|
+| **AWS S3** | ✅ Production | [S3 Connector Guide](docs/S3_CONNECTOR.md) |
+| **Google Cloud Storage** | ✅ Production | [GCS Connector Guide](docs/GCS_CONNECTOR.md) |
+| **Google Drive** | ✅ Production | [Drive Connector Guide](docs/DRIVE_CONNECTOR.md) |
+| Azure Blob Storage | 🚧 Planned | Config schema ready |
+
+**Features:**
+- Automatic polling for new/updated files
+- Incremental sync with cursor-based pagination
+- Multi-format support (PDF, DOCX, HTML, TXT)
+- ETag/generation-based change detection
+- Idempotent ingestion (no duplicates)
+
+---
+
 ## Why This Works: Research-Backed Design
 
 Active Graph KG's architecture is grounded in peer-reviewed research on AI-augmented systems, knowledge graph drift, and LLM-KG orchestration:
