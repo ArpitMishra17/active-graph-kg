@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Any, Union
+from typing import Any
 
 # Import metrics from the new package path
 try:
@@ -210,7 +210,7 @@ def log_performance(operation_name: str, labels: dict[str, str] | None = None):
 
 
 @contextmanager
-def log_operation(logger: Union[logging.Logger, MetricsLogger], operation: str, **context: Any):
+def log_operation(logger: logging.Logger | MetricsLogger, operation: str, **context: Any):
     """Context manager for logging operations with timing."""
     start_time = time.time()
     # Check if this is a MetricsLogger (has extra_fields parameter)

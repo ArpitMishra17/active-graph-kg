@@ -7,7 +7,6 @@ Supports OpenAI-compatible APIs (OpenAI, Azure, local models via LiteLLM).
 import os
 import time
 from collections.abc import Iterable
-from typing import Any
 
 from activekg.common.logger import get_enhanced_logger
 from activekg.common.metrics import metrics

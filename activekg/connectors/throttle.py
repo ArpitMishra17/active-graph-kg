@@ -3,8 +3,6 @@
 import time
 from typing import TYPE_CHECKING, cast
 
-import redis
-
 if TYPE_CHECKING:
     from redis import Redis
 
@@ -22,7 +20,7 @@ class IngestionThrottle:
             redis_client: Redis client instance
             max_per_sec: Maximum documents per second per tenant
         """
-        self.redis: "Redis[bytes]" = redis_client
+        self.redis: Redis[bytes] = redis_client
         self.max_per_sec = max_per_sec
 
     def acquire(self, tenant_id: str, provider: str) -> bool:
