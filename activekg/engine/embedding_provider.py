@@ -26,11 +26,17 @@ class EmbeddingProvider:
             return
         if self.backend == "sentence-transformers":
             try:
+                import torch
                 from sentence_transformers import SentenceTransformer
             except Exception as e:
                 raise ImportError("sentence-transformers not installed") from e
-            # Explicitly set device='cpu' to avoid meta tensor issues in CI
-            self._model = SentenceTransformer(self.model_name, device="cpu")
+            # Explicitly set device='cpu' and disable meta device to avoid tensor issues in CI
+            # Use dtype=torch.float32 to ensure proper tensor initialization
+            self._model = SentenceTransformer(
+                self.model_name,
+                device="cpu",
+                model_kwargs={"dtype": torch.float32, "low_cpu_mem_usage": False},
+            )
         elif self.backend == "ollama":
             try:
                 import ollama

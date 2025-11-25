@@ -29,8 +29,9 @@ jobs:
       ACTIVEKG_DSN: postgresql://activekg:activekg@localhost:5432/activekg
       LLM_ENABLED: 'false'
       AUTO_INDEX_ON_STARTUP: 'false'
+      JWT_ENABLED: 'false'
       CONNECTOR_KEK_V1: YAC4_BiOPM5oC5GdeZ4cOucTRgiDTLob6FqSD7rNKdA=
-      TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
+      TOKEN: ${{ secrets.E2E_ADMIN_TOKEN || 'dummy-token-jwt-disabled' }}
 
     steps:
       - name: Checkout
@@ -65,20 +66,14 @@ jobs:
           bash scripts/metrics_probe.sh || true
 
       - name: Proof points report
-        env:
-          TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
         run: |
           bash scripts/proof_points_report.sh || true
 
       - name: Seed ground truth (threshold=0.10)
-        env:
-          TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
         run: |
           make seed-ground-truth THRESH=0.10 || true
 
       - name: Retrieval quality (triple) + publish uplift
-        env:
-          TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
         run: |
           make retrieval-quality || true
           make publish-retrieval-uplift || true
