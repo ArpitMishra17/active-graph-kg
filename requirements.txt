@@ -13,7 +13,7 @@ psycopg-pool==3.2.7  # Connection pooling
 
 # Core dependencies (pinned for reproducibility)
 numpy==2.2.6  # Use 2.2.x for Python 3.10+ compatibility (2.3.x requires 3.11+)
-torch==2.6.0           # Pin PyTorch to avoid meta tensor issues in newer versions
+torch==2.5.1           # Pin PyTorch <2.6 to avoid meta tensor issues seen in CI
 transformers==4.57.1   # Compatible with sentence-transformers 3.x (requires >=4.41.0, <5.0.0)
 sentence-transformers==3.3.1  # Stable version - 5.x has meta tensor initialization bugs
 APScheduler==3.11.1
