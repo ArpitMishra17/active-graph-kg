@@ -278,9 +278,7 @@ class GraphRepository:
         db_rls = self._detect_rls()
 
         if RLS_MODE == "auto":
-            self.logger.info(
-                "RLS_MODE=auto, using database state", extra_fields={"db_rls": db_rls}
-            )
+            self.logger.info("RLS_MODE=auto, using database state", extra_fields={"db_rls": db_rls})
             return db_rls
 
         if RLS_MODE == "on":

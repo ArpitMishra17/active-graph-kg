@@ -33,6 +33,7 @@ class EmbeddingProvider:
             # Load without device parameter first, then move to CPU
             # This avoids the meta tensor initialization issue
             import os
+
             os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
             self._model = SentenceTransformer(self.model_name, device="cpu")
         elif self.backend == "ollama":
