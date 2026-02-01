@@ -353,6 +353,27 @@ def startup_event():
         },
     )
 
+    # Log runtime ML dependencies to verify loaded versions
+    try:
+        import torch
+        import sentence_transformers
+        logger.info(
+            "ML runtime versions loaded",
+            extra_fields={
+                "torch": torch.__version__,
+                "sentence_transformers": sentence_transformers.__version__,
+            },
+        )
+        # Fail-fast if sentence-transformers >= 5.0
+        st_version = sentence_transformers.__version__
+        if st_version.startswith("5."):
+            raise RuntimeError(
+                f"sentence-transformers {st_version} has meta tensor bugs. "
+                "Please downgrade to 3.3.1 (see requirements.txt)"
+            )
+    except ImportError as e:
+        logger.warning(f"ML dependencies check failed: {e}")
+
     # Quick Win 1: Fail-fast KEK validation
     try:
         from activekg.connectors.encryption import get_encryption

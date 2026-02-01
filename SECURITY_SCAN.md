@@ -22,15 +22,15 @@
 ### 2. transformers 4.47.0
 - **Status:** Insecure
 - **Secure versions available:** 4.57.1, 4.57.0, 4.56.2, 4.56.1, 4.56.0, 4.55.x, 4.54.x, 4.53.x
-- **Recommendation:** 
+- **Recommendation:**
   - ⚠️ **Update to 4.57.1** (latest secure version)
-  - Test with sentence-transformers 5.1.2 compatibility
+  - Test with sentence-transformers 3.3.1 compatibility
 - **Command:**
   ```bash
   pip install transformers==4.57.1
   # Test: python -c "from sentence_transformers import SentenceTransformer; print('OK')"
   ```
-- **Risk:** Low-Medium - check compatibility with sentence-transformers 5.1.2
+- **Risk:** Low-Medium - check compatibility with sentence-transformers 3.3.1
 
 ### 3. torch 2.5.1
 - **Status:** Insecure versions listed

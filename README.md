@@ -453,6 +453,50 @@ SELECT * FROM nodes;  -- Only returns acme_corp's nodes
 
 Policies applied to: `nodes`, `edges`, `events`, `node_versions`, `embedding_history`
 
+**RLS Configuration (RLS_MODE):**
+
+Active Graph KG supports flexible RLS configuration via the `RLS_MODE` environment variable:
+
+```bash
+# Auto-detect database RLS state (recommended, default)
+export RLS_MODE=auto
+
+# Always enable tenant context (force on)
+export RLS_MODE=on
+
+# Skip tenant context (only safe if DB RLS is disabled)
+export RLS_MODE=off
+```
+
+**Behavior Matrix:**
+
+| Database RLS | RLS_MODE | Application Behavior |
+|--------------|----------|---------------------|
+| ✅ Enabled | `auto` | ✅ Sets tenant context |
+| ✅ Enabled | `on` | ✅ Sets tenant context |
+| ✅ Enabled | `off` | ⚠️ **Forces ON** (logs error to prevent lockout) |
+| ❌ Disabled | `auto` | ✅ Skips tenant context |
+| ❌ Disabled | `on` | ✅ Sets tenant context (harmless) |
+| ❌ Disabled | `off` | ✅ Skips tenant context |
+
+**Safety Guarantee:** If `RLS_MODE=off` but database RLS is enabled, the application automatically forces tenant context ON and logs an error. This prevents accidental query lockouts where RLS would block all queries.
+
+**When to use each mode:**
+- `auto` (default): Recommended for most deployments. Auto-detects database state.
+- `on`: Use when you want to force tenant context even if RLS detection fails.
+- `off`: Use for single-tenant dev instances where database RLS is explicitly disabled.
+
+**To disable RLS completely:**
+```bash
+# 1. Disable at database level
+psql $ACTIVEKG_DSN -c "ALTER TABLE nodes DISABLE ROW LEVEL SECURITY;"
+psql $ACTIVEKG_DSN -c "ALTER TABLE edges DISABLE ROW LEVEL SECURITY;"
+psql $ACTIVEKG_DSN -c "ALTER TABLE events DISABLE ROW LEVEL SECURITY;"
+
+# 2. Set RLS_MODE to auto or off
+export RLS_MODE=auto  # Will auto-detect disabled state
+```
+
 #### 10. **Admin Refresh Endpoint**
 On-demand refresh for ops control:
 
@@ -728,7 +772,12 @@ ACTIVEKG_DSN='postgresql://activekg:activekg@localhost:5432/activekg'
 EMBEDDING_BACKEND='sentence-transformers'
 EMBEDDING_MODEL='all-MiniLM-L6-v2'
 ACTIVEKG_VERSION='1.0.0'
+
+# Row-Level Security mode: auto|on|off (default: auto)
+RLS_MODE='auto'  # auto-detect | force on | skip (safe mode prevents lockouts)
 ```
+
+See [.env.example](.env.example) for complete configuration options.
 
 ### Refresh Policy Examples
 ```json
@@ -1072,7 +1121,7 @@ Historical progress summaries, assessments, and implementation notes have been m
 
 - **Database:** PostgreSQL 16 + pgvector
 - **API:** FastAPI 0.104+
-- **Embeddings:** sentence-transformers (all-MiniLM-L6-v2, 384 dims)
+- **Embeddings:** sentence-transformers 3.3.1 (all-MiniLM-L6-v2, 384 dims)
 - **Scheduling:** APScheduler
 - **Metrics:** Prometheus
 - **Testing:** pytest, requests
@@ -1119,7 +1168,7 @@ Summary
 Before deploying to production, ensure:
 
 - [ ] JWT Authentication: Set `JWT_ENABLED=true` and use RS256 (set `JWT_PUBLIC_KEY`) or HS256 (`JWT_SECRET_KEY`) securely.
-- [ ] RLS Enabled: Run `psql -f enable_rls_policies.sql`.
+- [ ] RLS Enabled: Run `psql -f enable_rls_policies.sql` and set `RLS_MODE=auto` (or `on` for strict enforcement).
 - [ ] Scheduler Singleton: Exactly one instance with `RUN_SCHEDULER=true`.
 - [ ] Vector Indexes: Ensure ANN via `POST /admin/indexes` (IVFFLAT/HNSW as needed).
 - [ ] Auto-Index Disabled: Set `AUTO_INDEX_ON_STARTUP=false` for large datasets.

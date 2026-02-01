@@ -26,6 +26,12 @@ from psycopg_pool import ConnectionPool
 from activekg.common.logger import get_enhanced_logger
 from activekg.graph.models import Edge, Node
 
+# RLS Configuration
+# auto = detect DB RLS and set tenant context accordingly (default)
+# on = always set tenant context
+# off = skip tenant context (only safe if DB RLS is disabled)
+RLS_MODE = os.getenv("RLS_MODE", "auto").lower()
+
 
 class RefreshPolicyTD(TypedDict, total=False):
     interval: str
@@ -213,6 +219,94 @@ class GraphRepository:
             "Connection pool initialized", extra_fields={"min_size": 2, "max_size": 10}
         )
 
+        # Detect and resolve RLS mode at startup
+        self._rls_enabled = self._resolve_rls_mode()
+        self.logger.info(
+            "RLS mode resolved",
+            extra_fields={
+                "rls_mode_config": RLS_MODE,
+                "rls_enabled_runtime": self._rls_enabled,
+            },
+        )
+
+    def _detect_rls(self) -> bool:
+        """Detect if RLS is enabled on core tables at the database level.
+
+        Checks pg_class.relrowsecurity for the 'nodes' table.
+
+        Returns:
+            bool: True if RLS is enabled in the database, False otherwise
+        """
+        try:
+            conn = self.pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT relrowsecurity
+                        FROM pg_class
+                        WHERE relname = 'nodes'
+                        """
+                    )
+                    row = cur.fetchone()
+                    db_rls_enabled = bool(row and row[0]) if row else False
+                    self.logger.info(
+                        "RLS detection from database",
+                        extra_fields={"db_rls_enabled": db_rls_enabled},
+                    )
+                    return db_rls_enabled
+            finally:
+                self.pool.putconn(conn)
+        except Exception as e:
+            self.logger.warning(
+                "Failed to detect RLS status, assuming disabled",
+                extra_fields={"error": str(e)},
+            )
+            return False
+
+    def _resolve_rls_mode(self) -> bool:
+        """Resolve RLS mode based on environment and database state.
+
+        Behavior Matrix:
+        - RLS_MODE=auto: Use database RLS state
+        - RLS_MODE=on: Always enable tenant context
+        - RLS_MODE=off: Skip tenant context (but force ON if DB RLS is enabled to prevent lockout)
+
+        Returns:
+            bool: True if tenant context should be set, False otherwise
+        """
+        db_rls = self._detect_rls()
+
+        if RLS_MODE == "auto":
+            self.logger.info(
+                "RLS_MODE=auto, using database state", extra_fields={"db_rls": db_rls}
+            )
+            return db_rls
+
+        if RLS_MODE == "on":
+            self.logger.info("RLS_MODE=on, forcing tenant context enabled")
+            return True
+
+        if RLS_MODE == "off":
+            if db_rls:
+                self.logger.error(
+                    "RLS_MODE=off but database RLS is enabled! "
+                    "Forcing tenant context ON to prevent query lockout. "
+                    "To disable RLS, run: ALTER TABLE nodes DISABLE ROW LEVEL SECURITY;",
+                    extra_fields={"db_rls": db_rls, "rls_mode": RLS_MODE},
+                )
+                # Safety: Force ON to prevent complete lockout
+                return True
+            self.logger.info("RLS_MODE=off and database RLS is disabled, skipping tenant context")
+            return False
+
+        # Unknown RLS_MODE value, default to auto-detect
+        self.logger.warning(
+            f"Unknown RLS_MODE='{RLS_MODE}', defaulting to auto-detect",
+            extra_fields={"rls_mode": RLS_MODE, "db_rls": db_rls},
+        )
+        return db_rls
+
     def _distance_operator(self) -> tuple[str, str]:
         """Return (op_symbol, similarity_sql_expr_template).
 
@@ -274,6 +368,7 @@ class GraphRepository:
 
         - Uses a transaction block (`with conn:`) so writes are committed on success and rolled back on error.
         - Applies `SET LOCAL app.current_tenant_id` inside the transaction to enforce RLS without leaking state.
+        - RLS tenant context is only set if self._rls_enabled is True (controlled by RLS_MODE env var).
         """
         conn = self.pool.getconn()
         try:
@@ -282,61 +377,69 @@ class GraphRepository:
                 from psycopg import sql
 
                 with conn.cursor() as cur:
-                    # ALWAYS set or clear tenant context to prevent stale pooled connection state
-                    if tenant_id:
-                        # Prefer set_config() to avoid failures on servers that don't accept bare SET for custom GUCs
-                        try:
-                            cur.execute(
-                                "SELECT set_config('app.current_tenant_id', %s, true)",
-                                (tenant_id,),
-                            )
-                            self.logger.info(
-                                "RLS: set_config tenant", extra_fields={"tenant_id": tenant_id}
-                            )
-                        except Exception as e:
-                            # Best-effort fallback to SET LOCAL; keep transaction usable even if it fails
-                            self.logger.warning(
-                                "RLS: set_config failed; attempting SET LOCAL",
-                                extra_fields={"error": str(e)},
-                            )
+                    # Only set tenant context if RLS is enabled
+                    if self._rls_enabled:
+                        if tenant_id:
+                            # Prefer set_config() to avoid failures on servers that don't accept bare SET for custom GUCs
                             try:
                                 cur.execute(
-                                    sql.SQL("SET LOCAL app.current_tenant_id = {}").format(
-                                        sql.Literal(tenant_id)
-                                    )
+                                    "SELECT set_config('app.current_tenant_id', %s, true)",
+                                    (tenant_id,),
                                 )
-                                self.logger.info(
-                                    "RLS: SET tenant", extra_fields={"tenant_id": tenant_id}
+                                self.logger.debug(
+                                    "RLS: set_config tenant", extra_fields={"tenant_id": tenant_id}
                                 )
-                            except Exception as e2:
-                                # Do not poison the transaction; continue without tenant filter (RLS will fall back to NULL)
+                            except Exception as e:
+                                # Best-effort fallback to SET LOCAL; keep transaction usable even if it fails
                                 self.logger.warning(
-                                    "RLS: SET LOCAL failed; proceeding without explicit tenant setting",
-                                    extra_fields={"error": str(e2), "tenant_id": tenant_id},
+                                    "RLS: set_config failed; attempting SET LOCAL",
+                                    extra_fields={"error": str(e)},
                                 )
-                    else:
-                        # For NULL tenant: use special sentinel that matches RLS policy for NULL rows
-                        # RLS policy: (tenant_id IS NULL) OR (tenant_id = current_setting(...))
-                        # Disable tenant scoping by resetting the setting so current_setting(..., true) returns NULL
-                        try:
-                            cur.execute("RESET app.current_tenant_id")
-                            self.logger.info("RLS: RESET tenant (allow NULL rows)")
-                        except Exception as e:
-                            self.logger.warning(
-                                "RLS: RESET failed, continuing", extra_fields={"error": str(e)}
-                            )
+                                try:
+                                    cur.execute(
+                                        sql.SQL("SET LOCAL app.current_tenant_id = {}").format(
+                                            sql.Literal(tenant_id)
+                                        )
+                                    )
+                                    self.logger.debug(
+                                        "RLS: SET tenant", extra_fields={"tenant_id": tenant_id}
+                                    )
+                                except Exception as e2:
+                                    # Do not poison the transaction; continue without tenant filter (RLS will fall back to NULL)
+                                    self.logger.warning(
+                                        "RLS: SET LOCAL failed; proceeding without explicit tenant setting",
+                                        extra_fields={"error": str(e2), "tenant_id": tenant_id},
+                                    )
+                        else:
+                            # For NULL tenant: use special sentinel that matches RLS policy for NULL rows
+                            # RLS policy: (tenant_id IS NULL) OR (tenant_id = current_setting(...))
+                            # Disable tenant scoping by resetting the setting so current_setting(..., true) returns NULL
+                            try:
+                                cur.execute("RESET app.current_tenant_id")
+                                self.logger.debug("RLS: RESET tenant (allow NULL rows)")
+                            except Exception as e:
+                                self.logger.warning(
+                                    "RLS: RESET failed, continuing", extra_fields={"error": str(e)}
+                                )
 
-                    # Optional debug: verify tenant context
-                    if os.getenv("ACTIVEKG_DEBUG_RLS", "false").lower() == "true":
-                        cur.execute("SELECT current_setting('app.current_tenant_id', true)")
-                        current_tenant = cur.fetchone()[0]
-                        self.logger.info(
-                            "RLS context verified",
-                            extra_fields={
-                                "requested_tenant": tenant_id,
-                                "current_setting": current_tenant,
-                            },
+                        # Optional debug: verify tenant context
+                        if os.getenv("ACTIVEKG_DEBUG_RLS", "false").lower() == "true":
+                            cur.execute("SELECT current_setting('app.current_tenant_id', true)")
+                            current_tenant = cur.fetchone()[0]
+                            self.logger.info(
+                                "RLS context verified",
+                                extra_fields={
+                                    "requested_tenant": tenant_id,
+                                    "current_setting": current_tenant,
+                                },
+                            )
+                    else:
+                        # RLS disabled - skip tenant context setting
+                        self.logger.debug(
+                            "RLS disabled, skipping tenant context",
+                            extra_fields={"tenant_id": tenant_id, "rls_mode": RLS_MODE},
                         )
+
                 # Hand control back to caller within the same transaction
                 yield conn
         finally:

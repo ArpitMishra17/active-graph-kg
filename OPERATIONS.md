@@ -230,6 +230,44 @@ curl -X POST http://localhost:8000/_admin/connectors/rotate_keys \
 
 ## Operational Runbook
 
+### Re-embed Existing Nodes (after embedding changes)
+
+**When to run**:
+- After changing embedding backend/model or downgrading sentence-transformers
+- After seeding data when embeddings failed to generate
+
+**Steps**:
+1. Restart API/backend processes so the new embedding dependency loads.
+2. Re-embed all nodes (recommended after model changes):
+   ```bash
+   python3 examples/reembed_all.py --dsn "$ACTIVEKG_DSN"
+   ```
+   Optional flags: `--dry-run`, `--batch-size`, `--model`
+3. Or re-embed specific nodes via the admin API (requires `admin:refresh` when JWT is enabled):
+   ```bash
+   curl -X POST $API/admin/refresh \
+     -H "Authorization: Bearer $ADMIN_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"node_ids": ["<node-id-1>", "<node-id-2>"]}'
+   ```
+4. Verify embedding coverage:
+   ```bash
+   curl $API/debug/embed_info
+   ```
+   Expected fields (values will vary):
+   ```json
+   {
+     "embedding_backend": "sentence-transformers",
+     "embedding_model": "all-MiniLM-L6-v2",
+     "counts": {
+       "total_nodes": 7,
+       "with_embedding": 7,
+       "without_embedding": 0
+     },
+     "embedding_coverage_pct": 100.0
+   }
+   ```
+
 ### Key Rotation Procedure
 
 **When to Rotate Keys**:
