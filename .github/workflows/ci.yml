@@ -182,7 +182,19 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install pytest pytest-timeout requests pyjwt
-          pip install -r requirements.txt
+          pip install --no-cache-dir --force-reinstall -r requirements.txt
+
+      - name: Log ML dependency versions
+        run: |
+          python - <<'PY'
+          import torch
+          import sentence_transformers
+          import transformers
+          print("torch:", torch.__version__)
+          print("sentence-transformers:", sentence_transformers.__version__)
+          print("transformers:", transformers.__version__)
+          PY
+          pip show torch sentence-transformers transformers
       
       - name: Wait for PostgreSQL
         run: |
