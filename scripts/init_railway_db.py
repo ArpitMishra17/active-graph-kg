@@ -74,11 +74,16 @@ def main():
 
                 # Apply migrations (idempotent - safe to run multiple times)
                 migrations = [
+                    "001_add_embedding_history_index.sql",
+                    "004_add_external_id_index.sql",
                     "add_text_search.sql",
                     "005_connector_configs_table.sql",
                     "006_add_key_version.sql",
                     "007_add_provider_check.sql",
+                    "008_connector_cursors_table.sql",
                 ]
+                applied = 0
+                skipped = 0
                 for migration_file in migrations:
                     migration_path = os.path.join(
                         os.path.dirname(__file__), "..", "db", "migrations", migration_file
@@ -90,16 +95,20 @@ def main():
                                 sql = f.read()
                             cur.execute(sql)
                             print(f"✓ Migration {migration_file} applied")
+                            applied += 1
                         except Exception as e:
                             # Migrations may already be applied - check for specific errors
                             error_msg = str(e).lower()
                             if "already exists" in error_msg or "duplicate" in error_msg:
                                 print(f"⊙ Migration {migration_file} already applied (skipped)")
+                                skipped += 1
                             else:
                                 # Re-raise unexpected errors
                                 raise
-
-                print("\n✅ Database initialization complete!")
+                    else:
+                        print(f"⊙ Migration {migration_file} missing (skipped)")
+                        skipped += 1
+                print(f"\n✅ Database initialization complete! (applied={applied}, skipped={skipped})")
 
     except Exception as e:
         print(f"ERROR: Database initialization failed: {e}")
