@@ -82,6 +82,23 @@ def main():
                     cur.execute(sql)
                     print("✓ Text search migration applied")
 
+                # Apply connector-related migrations
+                connector_migrations = [
+                    "005_connector_configs_table.sql",
+                    "006_add_key_version.sql",
+                    "007_add_provider_check.sql",
+                ]
+                for migration_file in connector_migrations:
+                    migration_path = os.path.join(
+                        os.path.dirname(__file__), "..", "db", "migrations", migration_file
+                    )
+                    if os.path.exists(migration_path):
+                        print(f"Applying migration: {migration_file}...")
+                        with open(migration_path) as f:
+                            sql = f.read()
+                        cur.execute(sql)
+                        print(f"✓ Migration {migration_file} applied")
+
                 print("\n✅ Database initialization complete!")
 
     except Exception as e:
