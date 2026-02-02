@@ -108,7 +108,9 @@ def main():
                     else:
                         print(f"⊙ Migration {migration_file} missing (skipped)")
                         skipped += 1
-                print(f"\n✅ Database initialization complete! (applied={applied}, skipped={skipped})")
+                print(
+                    f"\n✅ Database initialization complete! (applied={applied}, skipped={skipped})"
+                )
 
     except Exception as e:
         print(f"ERROR: Database initialization failed: {e}")
