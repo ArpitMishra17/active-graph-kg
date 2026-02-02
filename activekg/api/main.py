@@ -2113,6 +2113,24 @@ async def ask_question(
         # 2. Low-similarity guardrail with fallback policy
         # Ensure top_similarity is Python float, not numpy scalar (avoid ambiguous array truthiness)
         top_similarity = float(results[0][1]) if results else 0.0
+        # Preserve true cosine similarity for the top-ranked result (if embedding is available)
+        top_vector_similarity = 0.0
+        max_vector_similarity = 0.0
+        try:
+            if results:
+                top_node = results[0][0]
+                if top_node.embedding is not None:
+                    top_vector_similarity = float(top_node.embedding @ query_embedding)
+                # Track max cosine similarity across candidate results for debugging
+                for node, _score in results:
+                    if node.embedding is None:
+                        continue
+                    sim = float(node.embedding @ query_embedding)
+                    if sim > max_vector_similarity:
+                        max_vector_similarity = sim
+        except Exception:
+            top_vector_similarity = 0.0
+            max_vector_similarity = 0.0
 
         # Determine gating score type based on fusion mode
         rrf_enabled = os.getenv("HYBRID_RRF_ENABLED", "true").lower() == "true"
@@ -2131,6 +2149,8 @@ async def ask_question(
                     "cited_nodes": 0,
                     "filtered_nodes": 0,
                     "top_similarity": round(top_similarity, 3),
+                    "top_vector_similarity": round(top_vector_similarity, 3),
+                    "max_vector_similarity": round(max_vector_similarity, 3),
                     "gating_score": round(top_similarity, 3),
                     "gating_score_type": gating_score_type,
                     "reason": "extremely_low_similarity",
@@ -2170,6 +2190,8 @@ async def ask_question(
                         "cited_nodes": 0,
                         "filtered_nodes": 0,
                         "top_similarity": round(top_similarity, 3),
+                        "top_vector_similarity": round(top_vector_similarity, 3),
+                        "max_vector_similarity": round(max_vector_similarity, 3),
                         "kth_similarity": round(kth_similarity, 3),
                         "gating_score": round(top_similarity, 3),
                         "gating_score_type": gating_score_type,
@@ -2318,6 +2340,8 @@ async def ask_question(
                 "filtered_nodes": len(filtered_results),
                 "cited_nodes": len(citations),
                 "top_similarity": round(top_similarity, 3),
+                "top_vector_similarity": round(top_vector_similarity, 3),
+                "max_vector_similarity": round(max_vector_similarity, 3),
                 "gating_score": round(top_similarity, 3),
                 "gating_score_type": gating_score_type,
                 "first_citation_idx": first_citation_idx,

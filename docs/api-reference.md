@@ -638,6 +638,8 @@ LLM-powered Q&A with grounded citations from knowledge graph.
     "filtered_nodes": 3,
     "cited_nodes": 2,
     "top_similarity": 0.854,
+    "top_vector_similarity": 0.854,
+    "max_vector_similarity": 0.862,
     "gating_score": 0.854,
     "gating_score_type": "rrf_fused",
     "first_citation_idx": 0,
@@ -674,12 +676,18 @@ LLM-powered Q&A with grounded citations from knowledge graph.
 
 **Metadata Fields:**
 
+**Interpretation Note:**  
+`top_similarity` reflects the **gating score** used for routing/guardrails (RRF/weighted/cosine depending on mode).  
+Use `top_vector_similarity` / `max_vector_similarity` for the **true cosine similarity** between query and document embeddings.
+
 | Field | Type | Description |
 |-------|------|-------------|
 | `searched_nodes` | integer | Total nodes retrieved |
 | `filtered_nodes` | integer | Nodes after similarity filtering |
 | `cited_nodes` | integer | Nodes actually cited in answer |
-| `top_similarity` | float | Highest similarity score |
+| `top_similarity` | float | Gating score for the top result (RRF/weighted/cosine depending on mode). This is the score used for routing and low-similarity guardrails. |
+| `top_vector_similarity` | float | Cosine similarity for the top-ranked result (true vector similarity). |
+| `max_vector_similarity` | float | Max cosine similarity among candidate results (true vector similarity). |
 | `gating_score` | float | Score used for gating decision |
 | `gating_score_type` | string | Score type: `rrf_fused`, `weighted_fusion`, or `cosine` |
 | `first_citation_idx` | integer | Index of first citation (0-based) |
@@ -690,6 +698,41 @@ LLM-powered Q&A with grounded citations from knowledge graph.
 | `intent_type` | string | Intent category (e.g., `entity_job`, `open_positions`) |
 | `classes_filter` | array[string] | Node classes filtered by intent |
 | `must_have_terms` | array[string] | Required terms for intent-based filtering |
+
+**Scoring Modes (Hybrid Search):**
+
+- **`HYBRID_RRF_ENABLED=true` (default):**  
+  Uses Reciprocal Rank Fusion (RRF) over vector similarity rank and text rank.  
+  Scores are **small (≈0.01–0.04)** and should not be compared directly to cosine.  
+  Formula: `rrf = 1/(k + rank_vec) + 1/(k + rank_text)` where `k = HYBRID_RRF_K` (default 60).
+
+- **`HYBRID_RRF_ENABLED=false`:**  
+  Uses weighted fusion of vector similarity and text rank.  
+  Formula: `hybrid = vector_weight * vec_sim + text_weight * (ts_rank / max_ts_rank)`  
+  (default `vector_weight=0.7`, `text_weight=0.3`).
+
+**How `top_similarity` is computed:**  
+`top_similarity` is the **top gating score** produced by the hybrid search stage:
+- RRF mode → RRF score  
+- Weighted mode → weighted hybrid score  
+- Vector-only mode → cosine similarity
+
+**Recommended thresholds (defaults):**
+- `ASK_SIM_THRESHOLD=0.30` (low-confidence fallback threshold in /ask)  
+- `RRF_LOW_SIM_THRESHOLD=0.01` (extremely low similarity guardrail when RRF is enabled)  
+- `RAW_LOW_SIM_THRESHOLD=0.15` (extremely low similarity guardrail when RRF is disabled)
+
+**Example (RRF score vs cosine):**
+```json
+{
+  "top_similarity": 0.033,
+  "top_vector_similarity": 0.583,
+  "max_vector_similarity": 0.583,
+  "gating_score_type": "rrf_fused"
+}
+```
+In RRF mode, `top_similarity` is the fused ranking score (small values), while
+`top_vector_similarity` reflects the true cosine similarity of the top-ranked result.
 
 **Intent Detection:**
 
