@@ -46,19 +46,20 @@ def main():
 
                 # Check if schema is already initialized
                 cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name = 'nodes';")
-                if cur.fetchone():
-                    print("✓ Database schema already initialized")
-                    sys.exit(0)
+                schema_exists = cur.fetchone() is not None
 
-                # Read and execute init.sql
-                print("Initializing database schema...")
-                init_sql_path = os.path.join(os.path.dirname(__file__), "..", "db", "init.sql")
-                with open(init_sql_path) as f:
-                    sql = f.read()
+                if schema_exists:
+                    print("✓ Database schema already initialized (skipping init.sql)")
+                else:
+                    # Read and execute init.sql
+                    print("Initializing database schema...")
+                    init_sql_path = os.path.join(os.path.dirname(__file__), "..", "db", "init.sql")
+                    with open(init_sql_path) as f:
+                        sql = f.read()
 
-                # Execute schema creation
-                cur.execute(sql)
-                print("✓ Database schema initialized")
+                    # Execute schema creation
+                    cur.execute(sql)
+                    print("✓ Database schema initialized")
 
                 # Check if RLS policies file exists
                 rls_sql_path = os.path.join(
@@ -71,33 +72,32 @@ def main():
                     cur.execute(sql)
                     print("✓ RLS policies applied")
 
-                # Check if text search migration exists
-                text_search_path = os.path.join(
-                    os.path.dirname(__file__), "..", "db", "migrations", "add_text_search.sql"
-                )
-                if os.path.exists(text_search_path):
-                    print("Applying text search migration...")
-                    with open(text_search_path) as f:
-                        sql = f.read()
-                    cur.execute(sql)
-                    print("✓ Text search migration applied")
-
-                # Apply connector-related migrations
-                connector_migrations = [
+                # Apply migrations (idempotent - safe to run multiple times)
+                migrations = [
+                    "add_text_search.sql",
                     "005_connector_configs_table.sql",
                     "006_add_key_version.sql",
                     "007_add_provider_check.sql",
                 ]
-                for migration_file in connector_migrations:
+                for migration_file in migrations:
                     migration_path = os.path.join(
                         os.path.dirname(__file__), "..", "db", "migrations", migration_file
                     )
                     if os.path.exists(migration_path):
                         print(f"Applying migration: {migration_file}...")
-                        with open(migration_path) as f:
-                            sql = f.read()
-                        cur.execute(sql)
-                        print(f"✓ Migration {migration_file} applied")
+                        try:
+                            with open(migration_path) as f:
+                                sql = f.read()
+                            cur.execute(sql)
+                            print(f"✓ Migration {migration_file} applied")
+                        except Exception as e:
+                            # Migrations may already be applied - check for specific errors
+                            error_msg = str(e).lower()
+                            if "already exists" in error_msg or "duplicate" in error_msg:
+                                print(f"⊙ Migration {migration_file} already applied (skipped)")
+                            else:
+                                # Re-raise unexpected errors
+                                raise
 
                 print("\n✅ Database initialization complete!")
 
