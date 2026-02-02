@@ -176,15 +176,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-      
+          # Disable cache to ensure clean ML lib installation
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install pytest pytest-timeout requests pyjwt
           pip install --no-cache-dir --force-reinstall -r requirements.txt
 
-      - name: Log ML dependency versions
+      - name: Log and verify ML dependency versions
         run: |
           python - <<'PY'
           import torch
@@ -193,6 +193,11 @@ jobs:
           print("torch:", torch.__version__)
           print("sentence-transformers:", sentence_transformers.__version__)
           print("transformers:", transformers.__version__)
+
+          # Assert correct versions to catch pip cache issues
+          assert torch.__version__.startswith("2.5."), f"Expected torch 2.5.x, got {torch.__version__}"
+          assert sentence_transformers.__version__.startswith("3.3."), f"Expected sentence-transformers 3.3.x, got {sentence_transformers.__version__}"
+          print("✓ ML dependency versions verified")
           PY
           pip show torch sentence-transformers transformers
       
