@@ -1449,7 +1449,8 @@ def list_nodes(
 
             # Get nodes with pagination
             query = f"""
-                SELECT id, classes, embedding IS NOT NULL as has_embedding
+                SELECT id, classes, embedding IS NOT NULL as has_embedding,
+                       embedding_status, embedding_error, embedding_attempts
                 FROM nodes
                 {where_clause}
                 ORDER BY id
@@ -1464,6 +1465,9 @@ def list_nodes(
                         "id": str(row[0]),
                         "classes": row[1] if row[1] else [],
                         "has_embedding": bool(row[2]),
+                        "embedding_status": row[3],
+                        "embedding_error": row[4],
+                        "embedding_attempts": row[5],
                     }
                 )
 
@@ -1502,6 +1506,12 @@ def get_node(
         "refresh_policy": n.refresh_policy,
         "triggers": n.triggers,
         "version": n.version,
+        "embedding_status": n.embedding_status,
+        "embedding_error": n.embedding_error,
+        "embedding_attempts": n.embedding_attempts,
+        "embedding_updated_at": n.embedding_updated_at.isoformat()
+        if n.embedding_updated_at
+        else None,
     }
 
 
