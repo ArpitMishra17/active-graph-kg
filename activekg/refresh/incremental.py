@@ -6,8 +6,17 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import StrEnum
+from enum import Enum
 from typing import Any
+
+try:
+    from enum import StrEnum  # Python 3.11+
+except Exception:  # pragma: no cover - fallback for Python < 3.11
+
+    class StrEnum(str, Enum):
+        """Fallback StrEnum for Python < 3.11."""
+
+        pass
 
 
 class ChangeType(StrEnum):
