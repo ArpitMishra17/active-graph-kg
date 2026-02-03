@@ -234,9 +234,48 @@ curl -X POST http://localhost:8000/nodes \
 ```
 
 **Notes:**
-- If `AUTO_EMBED_ON_CREATE=true`, embedding is generated asynchronously
+- If `AUTO_EMBED_ON_CREATE=true` and `EMBEDDING_ASYNC=true`, embedding is queued to Redis and processed by the embedding worker.
+- If `EMBEDDING_ASYNC=false`, embedding runs in-process via background task.
 - `tenant_id` from JWT overrides request body in production
 - Node ID is auto-generated UUID
+
+---
+
+#### POST /nodes/batch
+
+Create multiple nodes in a single request.
+
+**Authentication:** Required when JWT enabled
+
+**Request Body:**
+```json
+{
+  "tenant_id": "default",
+  "continue_on_error": true,
+  "nodes": [
+    {
+      "classes": ["Resume"],
+      "props": {"text": "Candidate text", "external_id": "1"},
+      "metadata": {"source": "bulk_upload"}
+    }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "created": 1,
+  "failed": 0,
+  "results": [
+    {"id": "uuid", "tenant_id": "default", "embedding_status": "queued", "job_id": "uuid"}
+  ]
+}
+```
+
+**Notes:**
+- Uses the same embedding mode as `POST /nodes`
+- Max batch size controlled by `NODE_BATCH_MAX`
 
 ---
 
@@ -1189,6 +1228,57 @@ curl -X POST http://localhost:8000/admin/refresh \
 - Emits `refreshed` event if drift > threshold
 - Writes to `embedding_history` table
 - `tenant_id` from JWT applies RLS filtering
+
+---
+
+#### GET /admin/embedding/status
+
+Get embedding queue depth (Redis) and embedding status counts (DB).
+
+**Authentication:** Required (scope: `admin:refresh`)
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `tenant_id` | string | No | Tenant ID (dev mode only; ignored when JWT enabled) |
+
+**Response:**
+```json
+{
+  "tenant_id": "default",
+  "status_counts": {"queued": 120, "processing": 4, "ready": 950, "failed": 2},
+  "queue": {"queue": 124, "retry": 3, "dlq": 1}
+}
+```
+
+---
+
+#### POST /admin/embedding/requeue
+
+Requeue failed embeddings (moves nodes back to queue).
+
+**Authentication:** Required (scope: `admin:refresh`)
+
+**Request Body:**
+```json
+{
+  "tenant_id": "default",
+  "node_ids": ["node_123", "node_456"],
+  "limit": 100
+}
+```
+
+**Notes:**
+- If `node_ids` is omitted, up to `limit` failed nodes are requeued.
+
+**Example:**
+```bash
+curl -X POST http://localhost:8000/admin/embedding/requeue \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"tenant_id":"default","limit":100}'
+```
 
 ---
 

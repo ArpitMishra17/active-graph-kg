@@ -88,6 +88,7 @@ def main():
                     "006_add_key_version.sql",
                     "007_add_provider_check.sql",
                     "008_connector_cursors_table.sql",
+                    "009_embedding_queue_status.sql",
                 ]
                 applied = 0
                 skipped = 0

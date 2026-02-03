@@ -155,10 +155,18 @@ ACTIVEKG_DSN='postgresql://activekg:YOUR_SECURE_PASSWORD@localhost:5432/activekg
 # Embeddings
 EMBEDDING_BACKEND='sentence-transformers'
 EMBEDDING_MODEL='all-MiniLM-L6-v2'
+EMBEDDING_ASYNC='true'
+EMBEDDING_QUEUE_MAX_DEPTH='5000'
+EMBEDDING_MAX_ATTEMPTS='5'
+EMBEDDING_TENANT_MAX_PENDING='2000'
+NODE_BATCH_MAX='200'
 
 # API
 ACTIVEKG_VERSION='1.0.0'
 WORKERS=4
+
+# Redis (required for async embedding queue)
+REDIS_URL='redis://localhost:6379/0'
 
 # Security (ADD THESE FOR 100% PRODUCTION READY)
 # JWT_SECRET_KEY='your-256-bit-secret-key'
@@ -202,6 +210,38 @@ sudo systemctl daemon-reload
 sudo systemctl enable activekg
 sudo systemctl start activekg
 sudo systemctl status activekg
+```
+
+---
+
+### 4. Embedding Worker Service (Async Queue)
+
+Create `/etc/systemd/system/activekg-embedding-worker.service`:
+```ini
+[Unit]
+Description=Active Graph KG Embedding Worker
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=activekg
+Group=activekg
+WorkingDirectory=/opt/activekg
+EnvironmentFile=/opt/activekg/.env
+ExecStart=/opt/activekg/venv/bin/python -m activekg.embedding.worker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable activekg-embedding-worker
+sudo systemctl start activekg-embedding-worker
+sudo systemctl status activekg-embedding-worker
 ```
 
 ---
