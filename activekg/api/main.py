@@ -23,17 +23,23 @@ from activekg.api.middleware import apply_rate_limit, get_tenant_context, requir
 from activekg.api.rate_limiter import RATE_LIMIT_ENABLED, get_identifier, rate_limiter
 from activekg.common.env import env_str
 from activekg.common.logger import clear_log_context, get_enhanced_logger, set_log_context
-from activekg.common.metrics import metrics
+from activekg.common.metrics import get_redis_client, metrics
 from activekg.common.validation import (
     AskRequest,
     EdgeCreate,
     HealthCheckResponse,
     KGSearchRequest,
     MetricsResponse,
+    NodeBatchCreate,
     NodeCreate,
 )
 from activekg.connectors.cache_subscriber import get_subscriber_health
 from activekg.connectors.webhooks import router as connectors_webhook_router
+from activekg.embedding.queue import (
+    enqueue_embedding_job,
+    get_pending_count,
+    queue_depth,
+)
 from activekg.engine.embedding_provider import EmbeddingProvider
 from activekg.engine.llm_provider import (
     LLMProvider,
@@ -60,6 +66,38 @@ from activekg.triggers.trigger_engine import TriggerEngine
 # Metrics enabled flag
 METRICS_ENABLED = os.getenv("METRICS_ENABLED", "true").lower() == "true"
 
+_embedding_redis_client = None
+
+
+def _get_embedding_redis():
+    global _embedding_redis_client
+    if _embedding_redis_client is not None:
+        return _embedding_redis_client
+    try:
+        _embedding_redis_client = get_redis_client()
+        return _embedding_redis_client
+    except Exception as e:
+        logger.warning("Embedding Redis unavailable", extra_fields={"error": str(e)})
+        return None
+
+
+def _check_embedding_queue_capacity(
+    redis_client, tenant_id: str | None, requested: int
+) -> None:
+    depth = queue_depth(redis_client)
+    if depth["queue"] + depth["retry"] + requested > EMBEDDING_QUEUE_MAX_DEPTH:
+        raise HTTPException(
+            status_code=429,
+            detail="Embedding queue overloaded, please retry later",
+        )
+    if EMBEDDING_TENANT_MAX_PENDING > 0:
+        pending = get_pending_count(redis_client, tenant_id)
+        if pending + requested > EMBEDDING_TENANT_MAX_PENDING:
+            raise HTTPException(
+                status_code=429,
+                detail="Tenant embedding queue limit exceeded, please retry later",
+            )
+
 
 # Request models
 class RotateKeysRequest(BaseModel):
@@ -69,6 +107,14 @@ class RotateKeysRequest(BaseModel):
     tenants: list[str] | None = None
     batch_size: int = 100
     dry_run: bool = False
+
+
+class EmbeddingRequeueRequest(BaseModel):
+    """Request model to requeue failed embeddings."""
+
+    tenant_id: str | None = None
+    node_ids: list[str] | None = None
+    limit: int = 100
 
 
 APP_VERSION = os.getenv("ACTIVEKG_VERSION", "1.0.0")
@@ -85,6 +131,13 @@ LLM_BACKEND = os.getenv("LLM_BACKEND", "groq")  # "openai", "groq", or "litellm"
 LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")  # Groq's Llama 3.1 8B (ultra-fast)
 LLM_ENABLED = os.getenv("LLM_ENABLED", "true").lower() == "true"
 AUTO_EMBED_ON_CREATE = os.getenv("AUTO_EMBED_ON_CREATE", "true").lower() == "true"
+EMBEDDING_ASYNC = os.getenv("EMBEDDING_ASYNC", "false").lower() == "true"
+EMBEDDING_QUEUE_MAX_DEPTH = int(os.getenv("EMBEDDING_QUEUE_MAX_DEPTH", "5000"))
+EMBEDDING_TENANT_MAX_PENDING = int(os.getenv("EMBEDDING_TENANT_MAX_PENDING", "2000"))
+EMBEDDING_QUEUE_REQUIRE_REDIS = (
+    os.getenv("EMBEDDING_QUEUE_REQUIRE_REDIS", "true").lower() == "true"
+)
+NODE_BATCH_MAX = int(os.getenv("NODE_BATCH_MAX", "200"))
 RUN_SCHEDULER = os.getenv("RUN_SCHEDULER", "true").lower() == "true"
 
 # Hybrid routing: fast model for simple queries, fallback for complex/low-confidence
@@ -1174,6 +1227,10 @@ def _background_embed(node_id: str, tenant_id: str | None = None):
             )
     except Exception as e:
         logger.error("Background embed failed", extra_fields={"node_id": node_id, "error": str(e)})
+        try:
+            repo.mark_embedding_failed(node_id, str(e), tenant_id=tenant_id)
+        except Exception:
+            pass
 
 
 @app.post("/nodes", response_model=None)
@@ -1196,6 +1253,18 @@ def create_node(
     else:
         tenant_id = node.tenant_id or "default"
 
+    redis_client = None
+    if AUTO_EMBED_ON_CREATE and EMBEDDING_ASYNC:
+        redis_client = _get_embedding_redis()
+        if not redis_client:
+            if EMBEDDING_QUEUE_REQUIRE_REDIS:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Embedding queue unavailable (Redis not configured)",
+                )
+        else:
+            _check_embedding_queue_capacity(redis_client, tenant_id, requested=1)
+
     n = Node(
         classes=node.classes,
         props=node.props,
@@ -1209,6 +1278,21 @@ def create_node(
 
     # Optionally auto-embed on create to make node searchable immediately
     if AUTO_EMBED_ON_CREATE:
+        if EMBEDDING_ASYNC and redis_client:
+            try:
+                job_id = enqueue_embedding_job(redis_client, node_id, n.tenant_id)
+                repo.mark_embedding_queued(node_id, tenant_id=n.tenant_id)
+                return {"id": node_id, "embedding_status": "queued", "job_id": job_id}
+            except Exception as e:
+                logger.error(
+                    "Failed to enqueue embedding job",
+                    extra_fields={"node_id": node_id, "error": str(e)},
+                )
+                if EMBEDDING_QUEUE_REQUIRE_REDIS:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Embedding queue unavailable",
+                    )
         try:
             background_tasks.add_task(_background_embed, node_id, n.tenant_id)
         except Exception as e:
@@ -1216,7 +1300,101 @@ def create_node(
                 "Failed to schedule background embed",
                 extra_fields={"node_id": node_id, "error": str(e)},
             )
+    else:
+        try:
+            repo.mark_embedding_skipped(node_id, "auto_embed_disabled", tenant_id=n.tenant_id)
+        except Exception:
+            pass
     return {"id": node_id}
+
+
+@app.post("/nodes/batch", response_model=None)
+def create_nodes_batch(
+    batch: NodeBatchCreate,
+    background_tasks: BackgroundTasks,
+    _rl: None = Depends(require_rate_limit("default")),
+    claims: JWTClaims | None = Depends(get_jwt_claims),
+):
+    """Create multiple nodes in a single request."""
+    assert repo is not None, "GraphRepository not initialized"
+
+    if not batch.nodes:
+        raise HTTPException(status_code=400, detail="nodes list is required")
+    if len(batch.nodes) > NODE_BATCH_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Batch too large (max {NODE_BATCH_MAX})",
+        )
+
+    if JWT_ENABLED and claims:
+        effective_tenant_id = claims.tenant_id
+    else:
+        effective_tenant_id = batch.tenant_id or "default"
+
+    redis_client = None
+    if AUTO_EMBED_ON_CREATE and EMBEDDING_ASYNC:
+        redis_client = _get_embedding_redis()
+        if not redis_client:
+            if EMBEDDING_QUEUE_REQUIRE_REDIS:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Embedding queue unavailable (Redis not configured)",
+                )
+        else:
+            _check_embedding_queue_capacity(
+                redis_client, effective_tenant_id, requested=len(batch.nodes)
+            )
+
+    results: list[dict[str, Any]] = []
+    created = 0
+    failed = 0
+
+    for item in batch.nodes:
+        tenant_id = effective_tenant_id
+        if not JWT_ENABLED and not batch.tenant_id:
+            tenant_id = item.tenant_id or "default"
+
+        try:
+            n = Node(
+                classes=item.classes,
+                props=item.props,
+                payload_ref=item.payload_ref,
+                metadata=item.metadata,
+                refresh_policy=item.refresh_policy,
+                triggers=item.triggers,
+                tenant_id=tenant_id,
+            )
+            node_id = repo.create_node(n)
+            created += 1
+
+            embedding_status = None
+            job_id = None
+            if AUTO_EMBED_ON_CREATE:
+                if EMBEDDING_ASYNC and redis_client:
+                    job_id = enqueue_embedding_job(redis_client, node_id, tenant_id)
+                    repo.mark_embedding_queued(node_id, tenant_id=tenant_id)
+                    embedding_status = "queued"
+                else:
+                    background_tasks.add_task(_background_embed, node_id, tenant_id)
+            else:
+                repo.mark_embedding_skipped(node_id, "auto_embed_disabled", tenant_id=tenant_id)
+                embedding_status = "skipped"
+
+            results.append(
+                {
+                    "id": node_id,
+                    "tenant_id": tenant_id,
+                    "embedding_status": embedding_status,
+                    "job_id": job_id,
+                }
+            )
+        except Exception as e:
+            failed += 1
+            results.append({"error": str(e), "tenant_id": tenant_id})
+            if not batch.continue_on_error:
+                break
+
+    return {"created": created, "failed": failed, "results": results}
 
 
 @app.get("/nodes", response_model=None)
@@ -1525,6 +1703,21 @@ def refresh_node(
         n = repo.get_node(node_id, tenant_id=effective_tenant_id)
         if not n:
             raise HTTPException(status_code=404, detail="Node not found")
+
+        if EMBEDDING_ASYNC:
+            redis_client = _get_embedding_redis()
+            if not redis_client and EMBEDDING_QUEUE_REQUIRE_REDIS:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Embedding queue unavailable (Redis not configured)",
+                )
+            if redis_client:
+                _check_embedding_queue_capacity(redis_client, n.tenant_id, requested=1)
+                job_id = enqueue_embedding_job(
+                    redis_client, node_id, n.tenant_id, action="refresh", force=True
+                )
+                repo.mark_embedding_queued(node_id, tenant_id=n.tenant_id)
+                return {"id": node_id, "status": "queued", "job_id": job_id}
 
         text = repo.load_payload_text(n)
         old = n.embedding
@@ -3018,6 +3211,119 @@ async def admin_refresh(
     except Exception as e:
         logger.error("Admin refresh failed", extra_fields={"error": str(e)})
         raise HTTPException(status_code=500, detail=f"Admin refresh failed: {str(e)}")
+
+
+@app.get("/admin/embedding/status", response_model=None)
+def embedding_status(
+    tenant_id: str | None = None,
+    claims: JWTClaims | None = Depends(get_jwt_claims),
+):
+    """Return embedding queue status and DB counts."""
+    assert repo is not None, "GraphRepository not initialized"
+    if JWT_ENABLED and claims and "admin:refresh" not in claims.scopes:
+        raise HTTPException(
+            status_code=403, detail="Insufficient permissions. Required scope: admin:refresh"
+        )
+
+    # Restrict tenant scope under JWT
+    effective_tenant_id = claims.tenant_id if (JWT_ENABLED and claims) else tenant_id
+
+    status_counts: dict[str, int] = {}
+    with repo._conn(tenant_id=effective_tenant_id) as conn:
+        with conn.cursor() as cur:
+            where = ""
+            params: list[Any] = []
+            if effective_tenant_id:
+                where = "WHERE tenant_id = %s"
+                params.append(effective_tenant_id)
+            cur.execute(
+                f"""
+                SELECT embedding_status, COUNT(*)
+                FROM nodes
+                {where}
+                GROUP BY embedding_status
+                """,
+                params,
+            )
+            for row in cur.fetchall():
+                status_counts[str(row[0])] = int(row[1])
+
+    redis_client = _get_embedding_redis()
+    queue_info: dict[str, int] | dict[str, str] | None = None
+    if redis_client:
+        try:
+            queue_info = queue_depth(redis_client)
+        except Exception as e:
+            queue_info = {"error": str(e)}
+
+    return {
+        "tenant_id": effective_tenant_id,
+        "status_counts": status_counts,
+        "queue": queue_info,
+    }
+
+
+@app.post("/admin/embedding/requeue", response_model=None)
+def embedding_requeue(
+    request: EmbeddingRequeueRequest,
+    claims: JWTClaims | None = Depends(get_jwt_claims),
+):
+    """Requeue failed embedding jobs."""
+    assert repo is not None, "GraphRepository not initialized"
+    if JWT_ENABLED and claims and "admin:refresh" not in claims.scopes:
+        raise HTTPException(
+            status_code=403, detail="Insufficient permissions. Required scope: admin:refresh"
+        )
+
+    redis_client = _get_embedding_redis()
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Embedding queue unavailable")
+
+    # Restrict tenant scope under JWT
+    effective_tenant_id = claims.tenant_id if (JWT_ENABLED and claims) else request.tenant_id
+    limit = max(1, min(1000, int(request.limit)))
+
+    # Determine nodes to requeue
+    nodes_to_requeue: list[tuple[str, str | None]] = []
+    if request.node_ids:
+        for node_id in request.node_ids:
+            nodes_to_requeue.append((node_id, effective_tenant_id))
+    else:
+        with repo._conn(tenant_id=effective_tenant_id) as conn:
+            with conn.cursor() as cur:
+                where = "WHERE embedding_status = 'failed'"
+                params: list[Any] = []
+                if effective_tenant_id:
+                    where += " AND tenant_id = %s"
+                    params.append(effective_tenant_id)
+                cur.execute(
+                    f"""
+                    SELECT id, tenant_id
+                    FROM nodes
+                    {where}
+                    ORDER BY embedding_updated_at DESC NULLS LAST
+                    LIMIT %s
+                    """,
+                    (*params, limit),
+                )
+                for row in cur.fetchall():
+                    nodes_to_requeue.append((str(row[0]), row[1]))
+
+    enqueued = 0
+    for node_id, node_tenant in nodes_to_requeue:
+        try:
+            repo.mark_embedding_queued(node_id, tenant_id=node_tenant)
+            enqueue_embedding_job(
+                redis_client, node_id, node_tenant, action="refresh", force=True
+            )
+            enqueued += 1
+        except Exception as e:
+            logger.error(
+                "Failed to requeue embedding",
+                extra_fields={"node_id": node_id, "error": str(e)},
+            )
+
+    return {"requested": len(nodes_to_requeue), "enqueued": enqueued}
 
 
 @app.get("/admin/anomalies", response_model=None)

@@ -300,6 +300,18 @@ class NodeCreate(BaseModel):
         return deduped
 
 
+class NodeBatchCreate(BaseModel):
+    """Validated batch node creation request."""
+
+    nodes: list[NodeCreate] = Field(..., min_length=1, max_length=500)
+    tenant_id: str | None = Field(
+        None,
+        max_length=100,
+        description="Tenant ID (dev mode only, overridden by JWT in production)",
+    )
+    continue_on_error: bool = Field(True, description="If false, abort on first error")
+
+
 class EdgeCreate(BaseModel):
     """Validated edge creation request.
 

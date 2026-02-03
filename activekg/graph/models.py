@@ -16,6 +16,10 @@ class Node:
     props: dict[str, Any] = field(default_factory=dict)
     payload_ref: str | None = None
     embedding: np.ndarray | None = None
+    embedding_status: str | None = None
+    embedding_error: str | None = None
+    embedding_attempts: int | None = None
+    embedding_updated_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     refresh_policy: dict[str, Any] = field(default_factory=dict)
     triggers: list[dict[str, Any]] = field(default_factory=list)

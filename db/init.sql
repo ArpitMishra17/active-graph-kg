@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS nodes (
   props JSONB NOT NULL DEFAULT '{}',
   payload_ref TEXT,
   embedding VECTOR(384),
+  embedding_status TEXT NOT NULL DEFAULT 'queued',
+  embedding_error TEXT,
+  embedding_attempts INT NOT NULL DEFAULT 0,
+  embedding_updated_at TIMESTAMPTZ,
   metadata JSONB NOT NULL DEFAULT '{}',
   refresh_policy JSONB NOT NULL DEFAULT '{}',
   triggers JSONB NOT NULL DEFAULT '[]',
@@ -82,6 +86,8 @@ CREATE INDEX IF NOT EXISTS idx_nodes_metadata ON nodes USING GIN (metadata);
 CREATE INDEX IF NOT EXISTS idx_nodes_triggers ON nodes USING GIN (triggers);
 CREATE INDEX IF NOT EXISTS idx_nodes_last_refreshed ON nodes(last_refreshed);
 CREATE INDEX IF NOT EXISTS idx_nodes_drift_score ON nodes(drift_score) WHERE drift_score IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_nodes_embedding_status ON nodes(embedding_status);
+CREATE INDEX IF NOT EXISTS idx_nodes_embedding_updated_at ON nodes(embedding_updated_at);
 
 -- Edge indexes for lineage traversal
 CREATE INDEX IF NOT EXISTS idx_edges_src ON edges(src, rel);

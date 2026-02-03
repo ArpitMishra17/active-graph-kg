@@ -40,7 +40,7 @@ class EmbeddingProvider:
             model_kwargs = {
                 "device_map": None,
                 "low_cpu_mem_usage": False,
-                "torch_dtype": torch.float32,
+                "dtype": torch.float32,
             }
             self._model = SentenceTransformer(
                 self.model_name, device="cpu", model_kwargs=model_kwargs

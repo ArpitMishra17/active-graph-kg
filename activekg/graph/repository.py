@@ -345,6 +345,11 @@ class GraphRepository:
         refresh_policy = cast(RefreshPolicyTD, cast(dict[str, Any], row[7] or {}))
         triggers = cast(list[TriggerPatternTD], cast(list[dict[str, Any]], row[8] or []))
 
+        embedding_status = cast(str | None, row[12]) if len(row) > 12 else None
+        embedding_error = cast(str | None, row[13]) if len(row) > 13 else None
+        embedding_attempts = cast(int | None, row[14]) if len(row) > 14 else None
+        embedding_updated_at = cast(Any, row[15]) if len(row) > 15 else None
+
         return Node(
             id=str(row[0]),
             tenant_id=cast(str | None, row[1]),
@@ -352,6 +357,10 @@ class GraphRepository:
             props=props,
             payload_ref=cast(str | None, row[4]),
             embedding=emb,
+            embedding_status=embedding_status,
+            embedding_error=embedding_error,
+            embedding_attempts=embedding_attempts,
+            embedding_updated_at=embedding_updated_at,
             metadata=metadata,
             refresh_policy=cast("dict[str, Any]", refresh_policy or {}),
             triggers=cast("list[dict[str, Any]]", triggers or []),
@@ -849,10 +858,101 @@ class GraphRepository:
                     SET embedding = %s,
                         drift_score = %s,
                         last_refreshed = %s,
+                        embedding_status = 'ready',
+                        embedding_error = NULL,
+                        embedding_updated_at = now(),
                         updated_at = now()
                     WHERE id = %s
                     """,
                     (embedding.tolist(), drift, timestamp, node_id),
+                )
+
+    def mark_embedding_queued(self, node_id: str, tenant_id: str | None = None) -> None:
+        """Mark node embedding as queued."""
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE nodes
+                    SET embedding_status = 'queued',
+                        embedding_error = NULL,
+                        embedding_updated_at = now(),
+                        updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (node_id,),
+                )
+
+    def mark_embedding_processing(self, node_id: str, tenant_id: str | None = None) -> int:
+        """Mark node embedding as processing and increment attempt counter."""
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE nodes
+                    SET embedding_status = 'processing',
+                        embedding_error = NULL,
+                        embedding_attempts = embedding_attempts + 1,
+                        embedding_updated_at = now(),
+                        updated_at = now()
+                    WHERE id = %s
+                    RETURNING embedding_attempts
+                    """,
+                    (node_id,),
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row else 0
+
+    def mark_embedding_failed(
+        self, node_id: str, error: str, tenant_id: str | None = None
+    ) -> None:
+        """Mark node embedding as failed with error message."""
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE nodes
+                    SET embedding_status = 'failed',
+                        embedding_error = %s,
+                        embedding_updated_at = now(),
+                        updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (error[:1000], node_id),
+                )
+
+    def mark_embedding_skipped(
+        self, node_id: str, reason: str, tenant_id: str | None = None
+    ) -> None:
+        """Mark node embedding as skipped with reason."""
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE nodes
+                    SET embedding_status = 'skipped',
+                        embedding_error = %s,
+                        embedding_updated_at = now(),
+                        updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (reason[:1000], node_id),
+                )
+
+    def mark_embedding_ready(self, node_id: str, tenant_id: str | None = None) -> None:
+        """Mark node embedding as ready without modifying the vector."""
+        with self._conn(tenant_id=tenant_id) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE nodes
+                    SET embedding_status = 'ready',
+                        embedding_error = NULL,
+                        embedding_updated_at = now(),
+                        updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (node_id,),
                 )
 
     def vector_search(
@@ -1347,7 +1447,7 @@ class GraphRepository:
                 automodel_args = {
                     "device_map": None,
                     "low_cpu_mem_usage": False,
-                    "torch_dtype": torch.float32,
+                    "dtype": torch.float32,
                 }
                 self._cross_encoder = CrossEncoder(
                     "cross-encoder/ms-marco-MiniLM-L-6-v2",
