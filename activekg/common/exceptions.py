@@ -4,11 +4,11 @@
 import traceback
 import uuid
 from datetime import datetime, timezone
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(StrEnum):
     VALIDATION_ERROR = "VALIDATION_ERROR"
     SEARCH_ENGINE_ERROR = "SEARCH_ENGINE_ERROR"
     INDEX_BUILD_ERROR = "INDEX_BUILD_ERROR"

@@ -1,13 +1,13 @@
 """Comprehensive input validation for all API endpoints."""
 
 import re
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
 
-class SeniorityLevel(str, Enum):
+class SeniorityLevel(StrEnum):
     JUNIOR = "junior"
     MID = "mid"
     SENIOR = "senior"

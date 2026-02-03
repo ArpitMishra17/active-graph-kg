@@ -6,11 +6,11 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ChangeType(str, Enum):
+class ChangeType(StrEnum):
     ADD = "add"
     UPDATE = "update"
     DELETE = "delete"
