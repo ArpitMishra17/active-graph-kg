@@ -14,9 +14,7 @@ DLQ_KEY = os.getenv("EMBEDDING_DLQ_KEY", "embedding:dlq")
 PENDING_PREFIX = os.getenv("EMBEDDING_PENDING_PREFIX", "embedding:pending")
 PENDING_TTL_SECONDS = int(os.getenv("EMBEDDING_PENDING_TTL_SECONDS", "3600"))
 TENANT_PENDING_PREFIX = os.getenv("EMBEDDING_TENANT_PENDING_PREFIX", "embedding:tenant:pending")
-TENANT_PENDING_TTL_SECONDS = int(
-    os.getenv("EMBEDDING_TENANT_PENDING_TTL_SECONDS", "3600")
-)
+TENANT_PENDING_TTL_SECONDS = int(os.getenv("EMBEDDING_TENANT_PENDING_TTL_SECONDS", "3600"))
 
 
 def _pending_key(node_id: str) -> str:

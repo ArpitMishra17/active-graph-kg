@@ -81,9 +81,7 @@ def _get_embedding_redis():
         return None
 
 
-def _check_embedding_queue_capacity(
-    redis_client, tenant_id: str | None, requested: int
-) -> None:
+def _check_embedding_queue_capacity(redis_client, tenant_id: str | None, requested: int) -> None:
     depth = queue_depth(redis_client)
     if depth["queue"] + depth["retry"] + requested > EMBEDDING_QUEUE_MAX_DEPTH:
         raise HTTPException(
@@ -134,9 +132,7 @@ AUTO_EMBED_ON_CREATE = os.getenv("AUTO_EMBED_ON_CREATE", "true").lower() == "tru
 EMBEDDING_ASYNC = os.getenv("EMBEDDING_ASYNC", "false").lower() == "true"
 EMBEDDING_QUEUE_MAX_DEPTH = int(os.getenv("EMBEDDING_QUEUE_MAX_DEPTH", "5000"))
 EMBEDDING_TENANT_MAX_PENDING = int(os.getenv("EMBEDDING_TENANT_MAX_PENDING", "2000"))
-EMBEDDING_QUEUE_REQUIRE_REDIS = (
-    os.getenv("EMBEDDING_QUEUE_REQUIRE_REDIS", "true").lower() == "true"
-)
+EMBEDDING_QUEUE_REQUIRE_REDIS = os.getenv("EMBEDDING_QUEUE_REQUIRE_REDIS", "true").lower() == "true"
 NODE_BATCH_MAX = int(os.getenv("NODE_BATCH_MAX", "200"))
 RUN_SCHEDULER = os.getenv("RUN_SCHEDULER", "true").lower() == "true"
 
@@ -3313,9 +3309,7 @@ def embedding_requeue(
     for node_id, node_tenant in nodes_to_requeue:
         try:
             repo.mark_embedding_queued(node_id, tenant_id=node_tenant)
-            enqueue_embedding_job(
-                redis_client, node_id, node_tenant, action="refresh", force=True
-            )
+            enqueue_embedding_job(redis_client, node_id, node_tenant, action="refresh", force=True)
             enqueued += 1
         except Exception as e:
             logger.error(

@@ -99,9 +99,7 @@ class EmbeddingWorker:
         try:
             node = self.repo.get_node(node_id, tenant_id=tenant_id)
             if not node:
-                self.repo.mark_embedding_failed(
-                    node_id, "node_not_found", tenant_id=tenant_id
-                )
+                self.repo.mark_embedding_failed(node_id, "node_not_found", tenant_id=tenant_id)
                 clear_pending(self.redis_client, node_id, tenant_id=tenant_id)
                 return
 
@@ -113,9 +111,7 @@ class EmbeddingWorker:
 
             text = self.repo.load_payload_text(node)
             if not text:
-                self.repo.mark_embedding_skipped(
-                    node_id, "empty_text", tenant_id=tenant_id
-                )
+                self.repo.mark_embedding_skipped(node_id, "empty_text", tenant_id=tenant_id)
                 clear_pending(self.redis_client, node_id, tenant_id=tenant_id)
                 return
 
@@ -128,7 +124,9 @@ class EmbeddingWorker:
                 node_id, drift, embedding_ref=node.payload_ref, tenant_id=tenant_id
             )
 
-            drift_threshold = node.refresh_policy.get("drift_threshold", 0.1) if node.refresh_policy else 0.1
+            drift_threshold = (
+                node.refresh_policy.get("drift_threshold", 0.1) if node.refresh_policy else 0.1
+            )
             if drift > drift_threshold:
                 self.repo.append_event(
                     node_id,
@@ -154,7 +152,9 @@ class EmbeddingWorker:
                 clear_pending(self.redis_client, node_id, tenant_id=tenant_id)
                 return
 
-            delay = min(self.retry_base_seconds * (2 ** max(0, attempts - 1)), self.retry_max_seconds)
+            delay = min(
+                self.retry_base_seconds * (2 ** max(0, attempts - 1)), self.retry_max_seconds
+            )
             self.repo.mark_embedding_queued(node_id, tenant_id=tenant_id)
             job["error"] = error_msg
             schedule_retry(self.redis_client, job, delay_seconds=delay)

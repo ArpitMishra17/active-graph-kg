@@ -903,9 +903,7 @@ class GraphRepository:
                 row = cur.fetchone()
                 return int(row[0]) if row else 0
 
-    def mark_embedding_failed(
-        self, node_id: str, error: str, tenant_id: str | None = None
-    ) -> None:
+    def mark_embedding_failed(self, node_id: str, error: str, tenant_id: str | None = None) -> None:
         """Mark node embedding as failed with error message."""
         with self._conn(tenant_id=tenant_id) as conn:
             with conn.cursor() as cur:
