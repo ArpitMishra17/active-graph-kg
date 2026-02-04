@@ -1744,8 +1744,8 @@ class GraphRepository:
         - payload_ref starting with 's3://' -> fetch from S3
         - payload_ref starting with 'file://' -> read from local file
         - payload_ref starting with 'http://' or 'https://' -> fetch from URL
-        - props['text'] -> inline text
-        - Empty payload_ref -> use props['text'] or empty string
+        - props['text'], props['resume_text'], props['content'], etc. -> inline text
+        - Empty payload_ref -> check common text keys or return empty string
         """
         # Try payload_ref first
         if node.payload_ref:
@@ -1759,8 +1759,13 @@ class GraphRepository:
                 # Assume local file path
                 return self._load_from_file(node.payload_ref)
 
-        # Fallback to inline text
-        return cast(str, (node.props or {}).get("text", ""))
+        # Fallback to inline text - check multiple common keys
+        props = node.props or {}
+        for key in ("text", "resume_text", "content", "body", "description"):
+            value = props.get(key)
+            if value and isinstance(value, str):
+                return value
+        return ""
 
     def _load_from_file(self, file_path: str) -> str:
         """Load text from local file."""
