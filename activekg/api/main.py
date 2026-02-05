@@ -1290,6 +1290,7 @@ def create_node(
         When EXTRACTION_ENABLED=true, structured field extraction is available.
         - extract_before_embed=true: Extract first, then embed (best quality)
         - extract_before_embed=false: Embed immediately, extract async (faster)
+        - extract=false: Skip extraction for this request (even if enabled)
         - Default behavior controlled by EXTRACTION_MODE env var
     """
     assert repo is not None, "GraphRepository not initialized"
@@ -1325,7 +1326,8 @@ def create_node(
     # Determine extraction behavior
     extract_sync = False
     extraction_job_id = None
-    if EXTRACTION_ENABLED and redis_client:
+    extract_enabled = EXTRACTION_ENABLED and redis_client and (node.extract is None or node.extract)
+    if extract_enabled:
         # Determine if we should extract before embedding
         if node.extract_before_embed is not None:
             extract_sync = node.extract_before_embed
@@ -1388,7 +1390,7 @@ def create_node(
             pass
 
     # Queue async extraction after embedding (if enabled and not sync mode)
-    if EXTRACTION_ENABLED and redis_client and not extract_sync:
+    if extract_enabled and not extract_sync:
         try:
             extraction_job_id = enqueue_extraction_job(
                 redis_client, node_id, tenant_id, priority="normal"
@@ -1434,6 +1436,7 @@ def create_nodes_batch(
         When EXTRACTION_ENABLED=true, structured field extraction is available.
         - batch.extract_before_embed=true: Extract first for all nodes (best quality)
         - batch.extract_before_embed=false: Embed immediately, extract async (faster)
+        - batch.extract=false: Skip extraction for all nodes in this batch
         - Default behavior controlled by EXTRACTION_MODE env var
     """
     assert repo is not None, "GraphRepository not initialized"
@@ -1467,7 +1470,10 @@ def create_nodes_batch(
 
     # Determine batch-level extraction behavior
     batch_extract_sync = False
-    if EXTRACTION_ENABLED and redis_client:
+    batch_extract_enabled = EXTRACTION_ENABLED and redis_client and (
+        batch.extract is None or batch.extract
+    )
+    if batch_extract_enabled:
         if batch.extract_before_embed is not None:
             batch_extract_sync = batch.extract_before_embed
         else:
@@ -1498,12 +1504,15 @@ def create_nodes_batch(
             result_item: dict[str, Any] = {"id": node_id, "tenant_id": tenant_id}
 
             # Determine extraction mode for this item
+            item_extract_enabled = batch_extract_enabled
+            if item.extract is not None:
+                item_extract_enabled = EXTRACTION_ENABLED and redis_client and item.extract
             item_extract_sync = batch_extract_sync
             if item.extract_before_embed is not None:
                 item_extract_sync = item.extract_before_embed
 
             # Handle sync extraction mode (extract first, then embed)
-            if EXTRACTION_ENABLED and redis_client and item_extract_sync:
+            if item_extract_enabled and item_extract_sync:
                 try:
                     extraction_job_id = enqueue_extraction_job(
                         redis_client, node_id, tenant_id, priority="high"
@@ -1538,7 +1547,7 @@ def create_nodes_batch(
             result_item["job_id"] = job_id
 
             # Queue async extraction (if enabled and not sync mode)
-            if EXTRACTION_ENABLED and redis_client and not item_extract_sync:
+            if item_extract_enabled and not item_extract_sync:
                 try:
                     extraction_job_id = enqueue_extraction_job(
                         redis_client, node_id, tenant_id, priority="normal"

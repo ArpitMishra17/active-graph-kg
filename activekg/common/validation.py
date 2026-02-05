@@ -263,6 +263,11 @@ class NodeCreate(BaseModel):
         "If false, embed immediately and extract async. "
         "Defaults to EXTRACTION_MODE env var (async if unset).",
     )
+    extract: bool | None = Field(
+        None,
+        description="If false, skip extraction for this request even when EXTRACTION_ENABLED=true. "
+        "If true or unset, extraction follows EXTRACTION_MODE.",
+    )
 
     @field_validator("classes")
     @classmethod
@@ -332,6 +337,11 @@ class NodeBatchCreate(BaseModel):
         None,
         description="If true, extract structured fields before embedding for all nodes. "
         "Overrides per-node setting. Defaults to EXTRACTION_MODE env var.",
+    )
+    extract: bool | None = Field(
+        None,
+        description="If false, skip extraction for all nodes in this batch. "
+        "Per-node extract flag overrides when set.",
     )
 
 
