@@ -1602,15 +1602,24 @@ def list_nodes(
     with repo._conn(tenant_id=effective_tenant_id) as conn:
         with conn.cursor() as cur:
             # Build query based on filter
-            where_clause = ""
+            where_parts: list[str] = []
+            params: list[Any] = []
+            if not JWT_ENABLED and tenant_id:
+                logger.info(
+                    "Dev tenant filter applied for /nodes",
+                    extra_fields={"tenant_id": tenant_id},
+                )
+                where_parts.append("tenant_id = %s")
+                params.append(tenant_id)
             if has_embedding is True:
-                where_clause = "WHERE embedding IS NOT NULL"
+                where_parts.append("embedding IS NOT NULL")
             elif has_embedding is False:
-                where_clause = "WHERE embedding IS NULL"
+                where_parts.append("embedding IS NULL")
+            where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
             # Get total count
             count_query = f"SELECT COUNT(*) FROM nodes {where_clause}"
-            cur.execute(count_query)
+            cur.execute(count_query, params)
             total = int(cur.fetchone()[0])
 
             # Get nodes with pagination
@@ -1622,7 +1631,7 @@ def list_nodes(
                 ORDER BY id
                 LIMIT %s OFFSET %s
             """
-            cur.execute(query, (limit, offset))
+            cur.execute(query, (*params, limit, offset))
             rows = cur.fetchall()
 
             for row in rows:
@@ -1662,6 +1671,12 @@ def get_node(
 
     n = repo.get_node(node_id, tenant_id=effective_tenant_id)
     if not n:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if not JWT_ENABLED and tenant_id and n.tenant_id != tenant_id:
+        logger.info(
+            "Dev tenant filter mismatch for /nodes/{id}",
+            extra_fields={"node_id": node_id, "tenant_id": tenant_id},
+        )
         raise HTTPException(status_code=404, detail="Node not found")
     return {
         "id": n.id,
