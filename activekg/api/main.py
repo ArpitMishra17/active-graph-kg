@@ -1205,7 +1205,7 @@ def _background_embed(node_id: str, tenant_id: str | None = None):
         n = repo.get_node(node_id, tenant_id=tenant_id)
         if not n:
             return
-        text = repo.load_payload_text(n)
+        text = repo.build_embedding_text(n)
         if not text:
             return
         old = n.embedding

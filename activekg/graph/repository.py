@@ -1767,6 +1767,72 @@ class GraphRepository:
                 return value
         return ""
 
+    def build_embedding_text(self, node: Node) -> str:
+        """Build embedding text with optional structured prefix for resume/job nodes.
+
+        If EMBEDDING_PREFIX_ENABLED=true and the node is a resume/job node (has 'Resume'
+        in classes or 'resume_text' in props), prepends structured fields to improve
+        embedding quality for job matching.
+
+        Prefix fields (when present):
+        - job_title
+        - required_skills
+        - good_to_have_skills
+        - experience_years
+        - education_requirement
+
+        Returns:
+            Embedding text (with prefix if applicable, otherwise raw payload text)
+        """
+        import os
+
+        base_text = self.load_payload_text(node)
+        if not base_text:
+            return ""
+
+        # Check if prefix is enabled
+        if os.getenv("EMBEDDING_PREFIX_ENABLED", "false").lower() != "true":
+            return base_text
+
+        # Guard: only apply prefix for resume/job nodes
+        props = node.props or {}
+        classes = node.classes or []
+        is_resume_or_job = (
+            "Resume" in classes
+            or "Job" in classes
+            or "resume_text" in props
+            or "job_title" in props
+        )
+        if not is_resume_or_job:
+            return base_text
+
+        # Build structured prefix
+        prefix_lines = []
+        prefix_fields = [
+            ("job_title", "JOB_TITLE"),
+            ("required_skills", "PRIMARY_SKILLS"),
+            ("good_to_have_skills", "GOOD_TO_HAVE"),
+            ("experience_years", "EXPERIENCE"),
+            ("education_requirement", "EDUCATION"),
+        ]
+
+        for prop_key, label in prefix_fields:
+            value = props.get(prop_key)
+            if value:
+                # Handle both string and list values
+                if isinstance(value, list):
+                    value = ", ".join(str(v) for v in value)
+                elif not isinstance(value, str):
+                    value = str(value)
+                if value.strip():
+                    prefix_lines.append(f"{label}: {value.strip()}")
+
+        if not prefix_lines:
+            return base_text
+
+        prefix = "\n".join(prefix_lines)
+        return f"{prefix}\n\n{base_text}"
+
     def _load_from_file(self, file_path: str) -> str:
         """Load text from local file."""
         try:

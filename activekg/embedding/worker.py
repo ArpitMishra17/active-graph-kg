@@ -109,7 +109,7 @@ class EmbeddingWorker:
                 clear_pending(self.redis_client, node_id, tenant_id=tenant_id)
                 return
 
-            text = self.repo.load_payload_text(node)
+            text = self.repo.build_embedding_text(node)
             if not text:
                 self.repo.mark_embedding_skipped(node_id, "empty_text", tenant_id=tenant_id)
                 clear_pending(self.redis_client, node_id, tenant_id=tenant_id)
