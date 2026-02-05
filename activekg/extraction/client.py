@@ -105,7 +105,7 @@ class ExtractionClient:
                 extra={
                     "model": self.primary_model,
                     "confidence": result.confidence,
-                    "skills_count": len(result.primary_skills),
+                    "skills_count": len(result.skills_raw) or len(result.primary_skills),
                 },
             )
             return result, self.primary_model
@@ -130,7 +130,7 @@ class ExtractionClient:
                 extra={
                     "model": self.fallback_model,
                     "confidence": result.confidence,
-                    "skills_count": len(result.primary_skills),
+                    "skills_count": len(result.skills_raw) or len(result.primary_skills),
                 },
             )
             return result, self.fallback_model

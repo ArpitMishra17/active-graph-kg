@@ -123,7 +123,7 @@ class EmbeddingWorker:
                 return
 
             content_hash = None
-            if not (node.props or {}).get("content_hash"):
+            if (not (node.props or {}).get("content_hash")) or (node_version != current_version):
                 content_hash = _compute_content_hash(text)
 
             new = self.embedder.encode([text])[0]

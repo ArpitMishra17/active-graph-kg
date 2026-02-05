@@ -32,21 +32,35 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- Update trigger function to include resume/job fields
+-- Update trigger function to include resume/job + extraction fields
 CREATE OR REPLACE FUNCTION update_text_search_vector()
 RETURNS TRIGGER AS $$
 BEGIN
     -- Build text_search_vector with weighted fields:
-    -- Weight A (highest): title, job_title, required_skills
-    -- Weight B (medium): text, resume_text, good_to_have_skills
+    -- Weight A (highest): title, job_title, current_title, primary_titles, required_skills, skills_raw, skills_normalized, primary_skills, recent_job_titles
+    -- Weight B (medium): text, resume_text, good_to_have_skills, certifications, industries, domains, functions, years_by_skill, years_experience_total, total_years_experience, location
     -- Weight C (lowest): metadata
     NEW.text_search_vector :=
         setweight(to_tsvector('english', COALESCE(NEW.props->>'title', '')), 'A') ||
         setweight(to_tsvector('english', COALESCE(NEW.props->>'job_title', '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(NEW.props->>'current_title', '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'primary_titles'), '')), 'A') ||
         setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'required_skills'), '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'skills_raw'), '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'skills_normalized'), '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'primary_skills'), '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'recent_job_titles'), '')), 'A') ||
         setweight(to_tsvector('english', COALESCE(NEW.props->>'text', '')), 'B') ||
         setweight(to_tsvector('english', COALESCE(NEW.props->>'resume_text', '')), 'B') ||
         setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'good_to_have_skills'), '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'certifications'), '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'industries'), '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'domains'), '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'functions'), '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'years_by_skill'), '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(NEW.props->>'years_experience_total', '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(NEW.props->>'total_years_experience', '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(jsonb_text_value(NEW.props, 'location'), '')), 'B') ||
         setweight(to_tsvector('english', COALESCE(NEW.metadata::text, '')), 'C');
     RETURN NEW;
 END;
@@ -58,20 +72,48 @@ UPDATE nodes
 SET text_search_vector =
     setweight(to_tsvector('english', COALESCE(props->>'title', '')), 'A') ||
     setweight(to_tsvector('english', COALESCE(props->>'job_title', '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(props->>'current_title', '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'primary_titles'), '')), 'A') ||
     setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'required_skills'), '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'skills_raw'), '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'skills_normalized'), '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'primary_skills'), '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'recent_job_titles'), '')), 'A') ||
     setweight(to_tsvector('english', COALESCE(props->>'text', '')), 'B') ||
     setweight(to_tsvector('english', COALESCE(props->>'resume_text', '')), 'B') ||
     setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'good_to_have_skills'), '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'certifications'), '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'industries'), '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'domains'), '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'functions'), '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'years_by_skill'), '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE(props->>'years_experience_total', '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE(props->>'total_years_experience', '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE(jsonb_text_value(props, 'location'), '')), 'B') ||
     setweight(to_tsvector('english', COALESCE(metadata::text, '')), 'C')
 WHERE
     text_search_vector IS NULL
     OR props ? 'resume_text'
     OR props ? 'required_skills'
     OR props ? 'good_to_have_skills'
-    OR props ? 'job_title';
+    OR props ? 'job_title'
+    OR props ? 'primary_skills'
+    OR props ? 'recent_job_titles'
+    OR props ? 'certifications'
+    OR props ? 'industries'
+    OR props ? 'years_experience_total'
+    OR props ? 'current_title'
+    OR props ? 'primary_titles'
+    OR props ? 'skills_raw'
+    OR props ? 'skills_normalized'
+    OR props ? 'domains'
+    OR props ? 'functions'
+    OR props ? 'years_by_skill'
+    OR props ? 'total_years_experience'
+    OR props ? 'location';
 
 -- Update comment
-COMMENT ON COLUMN nodes.text_search_vector IS 'Full-text search vector (weighted: title/job_title/required_skills=A, text/resume_text/good_to_have_skills=B, metadata=C)';
+COMMENT ON COLUMN nodes.text_search_vector IS 'Full-text search vector (weighted: title/job_title/current_title/primary_titles/required_skills/skills_raw/skills_normalized/primary_skills/recent_job_titles=A, text/resume_text/good_to_have_skills/certifications/industries/domains/functions/years_by_skill/years_experience_total/total_years_experience/location=B, metadata=C)';
 
 -- Verify migration
 DO $$

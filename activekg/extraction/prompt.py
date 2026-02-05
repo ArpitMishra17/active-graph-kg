@@ -17,42 +17,47 @@ RESUME_EXTRACTION_SYSTEM = """You are a resume parser that extracts structured i
 OUTPUT FORMAT:
 Return ONLY valid JSON matching this schema:
 {
-  "primary_skills": ["skill1", "skill2", ...],  // Top 8-12 skills (technical + professional)
-  "recent_job_titles": ["title1", "title2"],    // 1-3 most recent job titles
-  "years_experience_total": <number or "X-Y">,  // Total years or range
-  "certifications": ["cert1", "cert2"],         // Optional: professional certs
-  "industries": ["industry1", "industry2"],     // Optional: industries worked in
-  "confidence": 0.XX                            // Your confidence 0-1
+  "current_title": "string",
+  "primary_titles": ["string", ...],
+  "seniority": "intern|junior|mid|senior|staff|lead|manager|director|vp|cxo",
+  "skills_raw": ["string", ...],
+  "skills_normalized": ["string", ...],
+  "total_years_experience": <number or "X-Y" or null>,
+  "years_by_skill": { "skill": number, ... },
+  "domains": ["string", ...],
+  "functions": ["string", ...],
+  "location": {
+    "city": "string",
+    "country": "string",
+    "remote_preference": "onsite|hybrid|remote|any",
+    "work_authorization": "string",
+    "open_to_relocate": true|false
+  },
+  "certifications": ["string", ...],
+  "confidence": 0.XX
 }
 
 EXTRACTION RULES:
-1. primary_skills: Extract concrete, searchable skills (languages, frameworks, tools, methodologies)
+1. current_title: Most recent or current job title (not company)
+2. primary_titles: 1-3 canonical titles inferred from role history
+3. seniority: Normalize to one of the allowed values; leave null if uncertain
+4. skills_raw: Concrete, searchable skills (languages, frameworks, tools, methodologies)
    - Good: "Python", "React", "AWS", "Agile", "SQL", "Machine Learning"
-   - Bad: "Programming", "Technical Skills", "Software Development" (too vague)
-   - Limit to 8-12 most relevant skills
+   - Bad: "Programming", "Technical Skills", "Software Development"
+5. skills_normalized: Lowercased canonical tokens (e.g., "postgresql", "fastapi")
+6. total_years_experience: Total professional experience
+   - Use number if clear (5), range if uncertain ("3-5"), null if unknown
+7. years_by_skill: Only if explicitly stated; use numbers (years)
+8. domains: Industry/domain tags (e.g., FinTech, Healthcare, B2B SaaS)
+9. functions: Functional tags (backend, data, ML, product, DevOps, QA)
+10. location: Include if explicit. Use nulls for missing fields.
+11. certifications: Only include actual certifications (AWS, PMP, CPA, etc.)
 
-2. recent_job_titles: Extract actual job titles, not company names
-   - Good: "Senior Software Engineer", "Data Analyst", "Product Manager"
-   - Bad: "Google", "Worked at Microsoft" (company names)
-   - Limit to 1-3 most recent
-
-3. years_experience_total: Estimate total professional experience
-   - Use number if clear: 5
-   - Use range if uncertain: "3-5"
-   - Use null if cannot determine
-
-4. certifications: Only include actual certifications
-   - Good: "AWS Solutions Architect", "PMP", "CPA"
-   - Bad: "Bachelor's degree" (that's education, not certification)
-
-5. industries: Infer from companies/roles if not explicit
-   - Good: "Finance", "Healthcare", "E-commerce", "SaaS"
-
-6. confidence: Rate your extraction quality
-   - 0.9+: Clear, well-structured resume with explicit information
-   - 0.7-0.9: Reasonable extraction with some inference
-   - 0.5-0.7: Significant inference or unclear text
-   - <0.5: Poor quality text or minimal extractable information
+confidence:
+  - 0.9+: Clear, well-structured resume with explicit information
+  - 0.7-0.9: Reasonable extraction with some inference
+  - 0.5-0.7: Significant inference or unclear text
+  - <0.5: Poor quality text or minimal extractable information
 
 IMPORTANT:
 - Return ONLY the JSON object, no explanations or markdown

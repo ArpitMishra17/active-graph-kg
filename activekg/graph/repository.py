@@ -1798,6 +1798,11 @@ class GraphRepository:
         - good_to_have_skills
         - experience_years
         - education_requirement
+        - primary_skills (extraction)
+        - recent_job_titles (extraction)
+        - certifications (extraction)
+        - industries (extraction)
+        - years_experience_total (extraction)
 
         Returns:
             Embedding text (with prefix if applicable, otherwise raw payload text)
@@ -1827,19 +1832,54 @@ class GraphRepository:
         # Build structured prefix
         prefix_lines = []
         prefix_fields = [
+            ("current_title", "CURRENT_TITLE"),
+            ("primary_titles", "PRIMARY_TITLES"),
+            ("seniority", "SENIORITY"),
             ("job_title", "JOB_TITLE"),
-            ("required_skills", "PRIMARY_SKILLS"),
+            ("required_skills", "REQUIRED_SKILLS"),
             ("good_to_have_skills", "GOOD_TO_HAVE"),
+            ("skills_raw", "SKILLS_RAW"),
+            ("skills_normalized", "SKILLS_NORMALIZED"),
+            ("years_by_skill", "YEARS_BY_SKILL"),
             ("experience_years", "EXPERIENCE"),
             ("education_requirement", "EDUCATION"),
+            ("primary_skills", "EXTRACTED_SKILLS"),
+            ("recent_job_titles", "RECENT_TITLES"),
+            ("certifications", "CERTIFICATIONS"),
+            ("industries", "INDUSTRIES"),
+            ("domains", "DOMAINS"),
+            ("functions", "FUNCTIONS"),
+            ("location", "LOCATION"),
+            ("years_experience_total", "YEARS_EXPERIENCE_TOTAL"),
+            ("total_years_experience", "TOTAL_YEARS_EXPERIENCE"),
         ]
+
+        stable_sort_fields = {
+            "primary_skills",
+            "recent_job_titles",
+            "certifications",
+            "industries",
+            "skills_raw",
+            "skills_normalized",
+            "primary_titles",
+            "domains",
+            "functions",
+        }
 
         for prop_key, label in prefix_fields:
             value = props.get(prop_key)
             if value:
                 # Handle both string and list values
                 if isinstance(value, list):
-                    value = ", ".join(str(v) for v in value)
+                    items = [str(v) for v in value if str(v).strip()]
+                    if prop_key in stable_sort_fields:
+                        items = sorted(items, key=lambda s: s.lower())
+                    value = ", ".join(items)
+                elif isinstance(value, dict):
+                    items = []
+                    for k in sorted(value.keys(), key=lambda s: str(s).lower()):
+                        items.append(f"{k}={value[k]}")
+                    value = "; ".join(items)
                 elif not isinstance(value, str):
                     value = str(value)
                 if value.strip():

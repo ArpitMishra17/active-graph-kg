@@ -186,8 +186,8 @@ class ExtractionWorker:
                     "node_id": node_id,
                     "model": model_used,
                     "confidence": result.confidence,
-                    "skills_count": len(result.primary_skills),
-                    "titles_count": len(result.recent_job_titles),
+                    "skills_count": len(result.skills_raw) or len(result.primary_skills),
+                    "titles_count": len(result.primary_titles) or len(result.recent_job_titles),
                 },
             )
 
