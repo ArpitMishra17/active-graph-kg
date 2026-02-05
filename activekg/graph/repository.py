@@ -1236,8 +1236,8 @@ class GraphRepository:
                     except Exception:
                         base_candidates, _boost_candidates, adaptive_threshold = 20, 45, 0.55
 
-                    # Use base candidates initially; will adapt after seeing top score
-                    candidate_k = base_candidates
+                    # Ensure we fetch at least top_k candidates for reranking
+                    candidate_k = max(base_candidates, top_k)
                 else:
                     candidate_k = top_k
 
@@ -1479,8 +1479,23 @@ class GraphRepository:
             # Prepare pairs for cross-encoder
             pairs = []
             for node, _ in candidates:
-                # Use title + text for reranking
-                doc_text = node.props.get("title", "") + " " + node.props.get("text", "")
+                # Use title + text for reranking (fallback to common resume/job keys)
+                props = node.props or {}
+                title = (
+                    props.get("title")
+                    or props.get("job_title")
+                    or props.get("current_title")
+                    or ""
+                )
+                text = (
+                    props.get("text")
+                    or props.get("resume_text")
+                    or props.get("content")
+                    or props.get("body")
+                    or props.get("description")
+                    or ""
+                )
+                doc_text = " ".join(part for part in (title, text) if part)
                 pairs.append([query, doc_text[:512]])  # Limit to 512 chars
 
             # Get cross-encoder scores (unbounded logits)
