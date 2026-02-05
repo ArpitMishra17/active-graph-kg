@@ -166,7 +166,11 @@ class ExtractionClient:
             latency_ms = (time.time() - start_time) * 1000
             logger.debug(
                 "LLM extraction response",
-                extra={"model": model_name, "latency_ms": latency_ms, "response_len": len(response)},
+                extra={
+                    "model": model_name,
+                    "latency_ms": latency_ms,
+                    "response_len": len(response),
+                },
             )
 
             # Parse JSON

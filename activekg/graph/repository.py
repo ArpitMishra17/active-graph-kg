@@ -884,7 +884,7 @@ class GraphRepository:
                 cur.execute(
                     f"""
                     UPDATE nodes
-                    SET {', '.join(sets)}
+                    SET {", ".join(sets)}
                     WHERE id = %s
                     """,
                     params,

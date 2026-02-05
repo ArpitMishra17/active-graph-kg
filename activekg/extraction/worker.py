@@ -103,9 +103,7 @@ class ExtractionWorker:
             return
 
         # Mark as processing
-        self._update_extraction_status(
-            node_id, tenant_id, ExtractionStatus(status="processing")
-        )
+        self._update_extraction_status(node_id, tenant_id, ExtractionStatus(status="processing"))
 
         try:
             # Get node
@@ -193,9 +191,7 @@ class ExtractionWorker:
                 self.retry_base_seconds * (2 ** max(0, attempts - 1)),
                 self.retry_max_seconds,
             )
-            self._update_extraction_status(
-                node_id, tenant_id, ExtractionStatus(status="queued")
-            )
+            self._update_extraction_status(node_id, tenant_id, ExtractionStatus(status="queued"))
             job["error"] = error_msg
             schedule_extraction_retry(self.redis_client, job, delay_seconds=delay)
 
@@ -222,9 +218,7 @@ class ExtractionWorker:
                 self.retry_base_seconds * (2 ** max(0, attempts - 1)),
                 self.retry_max_seconds,
             )
-            self._update_extraction_status(
-                node_id, tenant_id, ExtractionStatus(status="queued")
-            )
+            self._update_extraction_status(node_id, tenant_id, ExtractionStatus(status="queued"))
             job["error"] = error_msg
             schedule_extraction_retry(self.redis_client, job, delay_seconds=delay)
 
