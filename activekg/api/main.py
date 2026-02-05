@@ -129,6 +129,20 @@ class EmbeddingRequeueRequest(BaseModel):
     limit: int = 2000
 
 
+class ExtractionRequeueRequest(BaseModel):
+    """Request model to requeue extraction jobs."""
+
+    tenant_id: str | None = None
+    node_ids: list[str] | None = None
+    status: str | None = Field(
+        None, description="Filter by extraction_status (null, failed, queued, etc.)"
+    )
+    only_null_status: bool = Field(
+        True, description="Only requeue nodes with no extraction_status (never queued)"
+    )
+    limit: int = 2000
+
+
 APP_VERSION = os.getenv("ACTIVEKG_VERSION", "1.0.0")
 # Prefer ACTIVEKG_DSN; fall back to DATABASE_URL for PaaS (e.g., Railway Postgres plugin)
 DSN = env_str(
@@ -3475,6 +3489,119 @@ def extraction_status(
         "tenant_id": effective_tenant_id,
         "status_counts": status_counts,
         "queue": queue_info,
+    }
+
+
+@app.post("/admin/extraction/requeue", response_model=None)
+def extraction_requeue(
+    request: ExtractionRequeueRequest,
+    claims: JWTClaims | None = Depends(get_jwt_claims),
+):
+    """Requeue extraction jobs for nodes.
+
+    Supports:
+    - Requeuing by extraction_status (null, failed, queued, etc.)
+    - Filtering nodes that never had extraction queued (only_null_status=true)
+    - Requeuing specific node_ids
+    """
+    assert repo is not None, "GraphRepository not initialized"
+    if JWT_ENABLED and claims and "admin:refresh" not in claims.scopes:
+        raise HTTPException(
+            status_code=403, detail="Insufficient permissions. Required scope: admin:refresh"
+        )
+
+    redis_client = _get_embedding_redis()
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Extraction queue unavailable (Redis)")
+
+    if not EXTRACTION_ENABLED:
+        raise HTTPException(status_code=503, detail="Extraction not enabled")
+
+    effective_tenant_id = claims.tenant_id if (JWT_ENABLED and claims) else request.tenant_id
+    limit = max(1, min(2000, int(request.limit)))
+    if request.status is not None:
+        request.only_null_status = False
+
+    nodes_to_requeue: list[tuple[str, str | None]] = []
+
+    if request.node_ids:
+        # Requeue specific nodes
+        with repo._conn(tenant_id=effective_tenant_id) as conn:
+            with conn.cursor() as cur:
+                if effective_tenant_id:
+                    cur.execute(
+                        """
+                        SELECT id, tenant_id
+                        FROM nodes
+                        WHERE id = ANY(%s)
+                          AND tenant_id = %s
+                        """,
+                        (request.node_ids, effective_tenant_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id, tenant_id
+                        FROM nodes
+                        WHERE id = ANY(%s)
+                        """,
+                        (request.node_ids,),
+                    )
+                for row in cur.fetchall():
+                    nodes_to_requeue.append((str(row[0]), row[1]))
+    else:
+        # Query nodes by extraction_status
+        with repo._conn(tenant_id=effective_tenant_id) as conn:
+            with conn.cursor() as cur:
+                where = "WHERE 1=1"
+                filter_params: list[Any] = []
+
+                if effective_tenant_id:
+                    where += " AND tenant_id = %s"
+                    filter_params.append(effective_tenant_id)
+
+                if request.only_null_status:
+                    where += " AND (props->>'extraction_status') IS NULL"
+                elif request.status:
+                    if request.status.lower() == "null":
+                        where += " AND (props->>'extraction_status') IS NULL"
+                    else:
+                        where += " AND props->>'extraction_status' = %s"
+                        filter_params.append(request.status)
+
+                cur.execute(
+                    f"""
+                    SELECT id, tenant_id
+                    FROM nodes
+                    {where}
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (*filter_params, limit),
+                )
+                for row in cur.fetchall():
+                    nodes_to_requeue.append((str(row[0]), row[1]))
+
+    # Enqueue extraction jobs
+    enqueued = 0
+    for node_id, tenant_id in nodes_to_requeue:
+        try:
+            job_id = enqueue_extraction_job(
+                redis_client, node_id, tenant_id, force=True, priority="normal"
+            )
+            if job_id:
+                _update_extraction_status(node_id, tenant_id, "queued")
+                enqueued += 1
+        except Exception as e:
+            logger.warning(
+                "Failed to enqueue extraction job (non-blocking)",
+                extra_fields={"node_id": node_id, "tenant_id": tenant_id, "error": str(e)},
+            )
+
+    return {
+        "requested": len(nodes_to_requeue),
+        "enqueued": enqueued,
+        "tenant_id": effective_tenant_id,
     }
 
 
