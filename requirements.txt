@@ -1,6 +1,7 @@
 # Core framework (pinned for reproducibility)
 fastapi==0.121.0
 uvicorn==0.38.0
+python-multipart==0.0.20  # Required for FastAPI UploadFile / form data
 pydantic==2.12.3
 pydantic-settings==2.11.0
 
