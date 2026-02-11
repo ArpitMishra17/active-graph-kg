@@ -6,8 +6,26 @@ Run this from the Railway environment where ACTIVEKG_DSN is available.
 
 import os
 import sys
+import time
 
 import psycopg
+
+MAX_RETRIES = 10
+RETRY_DELAY = 3  # seconds
+
+
+def _connect_with_retry(dsn: str) -> psycopg.Connection:
+    """Try connecting to the database with retries (Railway services start concurrently)."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return psycopg.connect(dsn, autocommit=True)
+        except (psycopg.OperationalError, psycopg.errors.ConnectionTimeout) as e:
+            if attempt == MAX_RETRIES:
+                raise
+            print(f"  Connection attempt {attempt}/{MAX_RETRIES} failed: {e}")
+            print(f"  Retrying in {RETRY_DELAY}s...")
+            time.sleep(RETRY_DELAY)
+    raise RuntimeError("unreachable")
 
 
 def main():
@@ -19,8 +37,8 @@ def main():
     print("Connecting to database...")
 
     try:
-        # Connect to database
-        with psycopg.connect(dsn, autocommit=True) as conn:
+        # Connect to database (with retry for Railway cold starts)
+        with _connect_with_retry(dsn) as conn:
             with conn.cursor() as cur:
                 # Check if pgvector is available
                 print("Checking pgvector extension availability...")
