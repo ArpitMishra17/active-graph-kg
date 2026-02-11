@@ -13,6 +13,26 @@ from activekg.connectors.extract import extract_text
 
 logger = get_enhanced_logger(__name__)
 
+_GCP_CREDS_PATH = "/tmp/gcp-credentials.json"
+_creds_written = False
+
+
+def _ensure_gcp_credentials_file() -> None:
+    """Decode GOOGLE_CREDENTIALS_B64 into a temp file and set GOOGLE_APPLICATION_CREDENTIALS."""
+    global _creds_written  # noqa: PLW0603
+    if _creds_written:
+        return
+    b64 = os.getenv("GOOGLE_CREDENTIALS_B64")
+    if not b64:
+        return
+    import base64
+
+    with open(_GCP_CREDS_PATH, "wb") as f:
+        f.write(base64.b64decode(b64))
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _GCP_CREDS_PATH
+    _creds_written = True
+    logger.info("Decoded GOOGLE_CREDENTIALS_B64 → %s", _GCP_CREDS_PATH)
+
 
 def _parse_gcs_uri(uri: str) -> tuple[str, str]:
     """Parse gs://bucket/object into (bucket, object_name)."""
@@ -35,18 +55,17 @@ class GCSConnector(BaseConnector):
       - service_account_json_path: Path to service account JSON file
 
     Authentication (checked in order):
-      1. credentials_json in config (inline JSON string)
-      2. GOOGLE_CREDENTIALS_JSON env var (inline JSON string)
-      3. service_account_json_path in config (file path)
-      4. GOOGLE_APPLICATION_CREDENTIALS env var (file path)
-      5. Default credentials (gcloud CLI, workload identity)
+      1. GOOGLE_CREDENTIALS_B64 env var (base64-encoded JSON, decoded to temp file)
+      2. service_account_json_path in config (file path)
+      3. GOOGLE_APPLICATION_CREDENTIALS env var (file path)
+      4. Default credentials (gcloud CLI, workload identity)
     """
 
     def __init__(self, tenant_id: str, config: dict[str, Any]):
         super().__init__(tenant_id, config)
 
-        # Get credentials (priority: file path > inline JSON > default)
-        # File path is more reliable than inline JSON with dotenv
+        _ensure_gcp_credentials_file()
+
         credentials_path = config.get("service_account_json_path") or os.getenv(
             "GOOGLE_APPLICATION_CREDENTIALS"
         )
