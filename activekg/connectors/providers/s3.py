@@ -128,4 +128,3 @@ class S3Connector(BaseConnector):
             next_cursor = json.dumps({"ContinuationToken": resp["NextContinuationToken"]})
 
         return changes, next_cursor
-

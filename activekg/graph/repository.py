@@ -1482,10 +1482,7 @@ class GraphRepository:
                 # Use title + text for reranking (fallback to common resume/job keys)
                 props = node.props or {}
                 title = (
-                    props.get("title")
-                    or props.get("job_title")
-                    or props.get("current_title")
-                    or ""
+                    props.get("title") or props.get("job_title") or props.get("current_title") or ""
                 )
                 text = (
                     props.get("text")

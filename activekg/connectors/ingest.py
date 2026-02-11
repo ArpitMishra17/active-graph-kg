@@ -230,7 +230,9 @@ class IngestionProcessor:
             except Exception as e:
                 logger.warning(f"Failed to enqueue embedding for {chunk_uuid}: {e}")
 
-        logger.info(f"Ingested {external_id}: {len(chunk_ids)} chunks created, {enqueued} embedding jobs enqueued")
+        logger.info(
+            f"Ingested {external_id}: {len(chunk_ids)} chunks created, {enqueued} embedding jobs enqueued"
+        )
 
     def _delete_existing_chunks(self, parent_external_id: str):
         """Delete existing chunk nodes for parent."""

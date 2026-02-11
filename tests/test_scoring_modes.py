@@ -19,9 +19,7 @@ def _llm_available() -> bool:
     if not enabled:
         return False
     return bool(
-        os.getenv("GROQ_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-        or os.getenv("ANTHROPIC_API_KEY")
+        os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
     )
 
 

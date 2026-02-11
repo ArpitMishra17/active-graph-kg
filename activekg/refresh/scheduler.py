@@ -43,7 +43,9 @@ class RefreshScheduler:
     - Optionally runs trigger engine after refreshes
     """
 
-    def __init__(self, repository, embedding_provider, trigger_engine=None, gcs_poller_enabled=True):
+    def __init__(
+        self, repository, embedding_provider, trigger_engine=None, gcs_poller_enabled=True
+    ):
         self.repo = repository
         self.embedder = embedding_provider
         self.trigger_engine = trigger_engine

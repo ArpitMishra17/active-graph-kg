@@ -50,7 +50,6 @@ class GCSConnector(BaseConnector):
         credentials_path = config.get("service_account_json_path") or os.getenv(
             "GOOGLE_APPLICATION_CREDENTIALS"
         )
-        credentials_json = config.get("credentials_json") or os.getenv("GOOGLE_CREDENTIALS_JSON")
         project = config.get("project") or os.getenv("GOOGLE_CLOUD_PROJECT")
 
         # Debug logging
@@ -303,4 +302,3 @@ class GCSConnector(BaseConnector):
                 extra_fields={"tenant_id": self.tenant_id, "bucket": bucket_name, "prefix": prefix},
             )
             raise
-

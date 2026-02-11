@@ -15,7 +15,18 @@ from dotenv import load_dotenv
 load_dotenv()  # Load .env file at startup
 
 import numpy as np
-from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Body,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -510,7 +521,9 @@ def startup_event():
     global scheduler
     if RUN_SCHEDULER:
         try:
-            scheduler = RefreshScheduler(repo, embedder, trigger_engine=trigger_engine, gcs_poller_enabled=RUN_GCS_POLLER)
+            scheduler = RefreshScheduler(
+                repo, embedder, trigger_engine=trigger_engine, gcs_poller_enabled=RUN_GCS_POLLER
+            )
             scheduler.start()
             logger.info("RefreshScheduler started on startup")
         except Exception as e:
@@ -1477,8 +1490,8 @@ def create_nodes_batch(
 
     # Determine batch-level extraction behavior
     batch_extract_sync = False
-    batch_extract_enabled = EXTRACTION_ENABLED and redis_client and (
-        batch.extract is None or batch.extract
+    batch_extract_enabled = (
+        EXTRACTION_ENABLED and redis_client and (batch.extract is None or batch.extract)
     )
     if batch_extract_enabled:
         if batch.extract_before_embed is not None:
@@ -1990,6 +2003,7 @@ async def upload_files(
         The ``tenant_id`` form field is only used in dev mode.
     """
     from hashlib import sha256
+
     from activekg.connectors.chunker import create_chunk_nodes
     from activekg.connectors.extract import extract_text
 

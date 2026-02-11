@@ -292,9 +292,7 @@ class IngestRequest(BaseModel):
 
 
 @router.post("/{provider}/ingest")
-def ingest(
-    provider: str, req: IngestRequest, claims: JWTClaims | None = Depends(get_jwt_claims)
-):
+def ingest(provider: str, req: IngestRequest, claims: JWTClaims | None = Depends(get_jwt_claims)):
     """List files from connector and queue them for ingestion.
 
     This endpoint lists files from the configured bucket/folder and pushes them
@@ -455,9 +453,7 @@ def ingest(
 
 
 @router.get("/{provider}/queue-status")
-def queue_status(
-    provider: str, tenant_id: str, claims: JWTClaims | None = Depends(get_jwt_claims)
-):
+def queue_status(provider: str, tenant_id: str, claims: JWTClaims | None = Depends(get_jwt_claims)):
     """Get the current queue depth for a connector.
 
     Use this to monitor ingestion progress after calling /ingest.

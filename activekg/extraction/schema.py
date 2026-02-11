@@ -47,9 +47,7 @@ class ExtractionResult(BaseModel):
     """Structured extraction output from resume parsing."""
 
     # Phase 2A fields (must-have)
-    current_title: str | None = Field(
-        default=None, description="Most recent or current job title"
-    )
+    current_title: str | None = Field(default=None, description="Most recent or current job title")
     primary_titles: list[str] = Field(
         default_factory=list,
         description="1-3 canonical titles (normalized)",

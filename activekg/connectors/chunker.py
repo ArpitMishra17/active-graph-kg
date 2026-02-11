@@ -11,6 +11,7 @@ def _deterministic_uuid(external_id: str) -> str:
     """Generate a deterministic UUID from an external ID string."""
     return str(uuid.uuid5(uuid.NAMESPACE_URL, external_id))
 
+
 # Default chunking parameters
 DEFAULT_MAX_CHUNK_CHARS = 8000
 DEFAULT_OVERLAP_CHARS = 500
@@ -88,19 +89,21 @@ def create_chunk_nodes(
     """
     # Create parent node (no embedding - lightweight)
     parent_uuid = _deterministic_uuid(parent_node_id)
-    repo.create_node(Node(
-        id=parent_uuid,
-        classes=parent_classes,
-        props={
-            "title": parent_title,
-            "external_id": parent_node_id,
-            **parent_metadata,
-            "is_parent": True,
-            "has_chunks": True,
-        },
-        embedding=None,
-        tenant_id=tenant_id,
-    ))
+    repo.create_node(
+        Node(
+            id=parent_uuid,
+            classes=parent_classes,
+            props={
+                "title": parent_title,
+                "external_id": parent_node_id,
+                **parent_metadata,
+                "is_parent": True,
+                "has_chunks": True,
+            },
+            embedding=None,
+            tenant_id=tenant_id,
+        )
+    )
 
     # Chunk the text
     chunks = chunk_text(text, max_chunk_chars, overlap_chars)
@@ -115,37 +118,41 @@ def create_chunk_nodes(
         chunk_classes = ["Chunk"] + [c for c in parent_classes if c != "Document"]
 
         # Create chunk node (embedding enqueued by IngestionProcessor)
-        repo.create_node(Node(
-            id=chunk_uuid,
-            classes=chunk_classes,
-            props={
-                "text": chunk_content,
-                "chunk_index": i,
-                "total_chunks": len(chunks),
-                "parent_id": parent_node_id,
-                "parent_title": parent_title,
-                "external_id": chunk_external_id,
-                # Inherit entity hints for typed retrieval
-                "entity_type": parent_metadata.get("entity_type"),
-                "role": parent_metadata.get("role"),  # For job chunks
-                "skills": parent_metadata.get("skills"),  # For job/resume chunks
-            },
-            tenant_id=tenant_id,
-        ))
+        repo.create_node(
+            Node(
+                id=chunk_uuid,
+                classes=chunk_classes,
+                props={
+                    "text": chunk_content,
+                    "chunk_index": i,
+                    "total_chunks": len(chunks),
+                    "parent_id": parent_node_id,
+                    "parent_title": parent_title,
+                    "external_id": chunk_external_id,
+                    # Inherit entity hints for typed retrieval
+                    "entity_type": parent_metadata.get("entity_type"),
+                    "role": parent_metadata.get("role"),  # For job chunks
+                    "skills": parent_metadata.get("skills"),  # For job/resume chunks
+                },
+                tenant_id=tenant_id,
+            )
+        )
 
         # Create DERIVED_FROM edge with chunk position metadata
-        repo.create_edge(Edge(
-            src=chunk_uuid,
-            dst=parent_uuid,
-            rel="DERIVED_FROM",
-            props={
-                "chunk_index": i,
-                "total_chunks": len(chunks),
-                "char_start": i * (max_chunk_chars - overlap_chars),  # Approximate
-                "char_end": (i + 1) * max_chunk_chars,
-            },
-            tenant_id=tenant_id,
-        ))
+        repo.create_edge(
+            Edge(
+                src=chunk_uuid,
+                dst=parent_uuid,
+                rel="DERIVED_FROM",
+                props={
+                    "chunk_index": i,
+                    "total_chunks": len(chunks),
+                    "char_start": i * (max_chunk_chars - overlap_chars),  # Approximate
+                    "char_end": (i + 1) * max_chunk_chars,
+                },
+                tenant_id=tenant_id,
+            )
+        )
 
         chunk_ids.append(chunk_uuid)
 

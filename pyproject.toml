@@ -63,6 +63,9 @@ unfixable = []
 "activekg/connectors/providers/__init__.py" = [
     "F401",  # Allow unused imports (optional provider imports)
 ]
+"activekg/api/main.py" = [
+    "E402",  # load_dotenv() must run before imports that read env vars
+]
 "activekg/api/admin_connectors.py" = [
     "E402",  # Allow imports after docstring
 ]
