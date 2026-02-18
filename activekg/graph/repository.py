@@ -766,7 +766,9 @@ class GraphRepository:
                     return None
                 return self._build_node_from_row(row)
 
-    def get_node_by_external_id(self, external_id: str, tenant_id: str | None = None) -> Node | None:
+    def get_node_by_external_id(
+        self, external_id: str, tenant_id: str | None = None
+    ) -> Node | None:
         with self._conn(tenant_id=tenant_id) as conn:
             with conn.cursor() as cur:
                 cur.execute(
