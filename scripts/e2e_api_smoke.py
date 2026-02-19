@@ -62,8 +62,8 @@ def main():
     print(f"Testing API: {API}")
     print(f"Tenant: {TENANT}\n")
 
-    admin_token = make_token(TENANT, ["admin:refresh", "search:read", "nodes:write"])
-    user_token = make_token(TENANT, ["search:read", "nodes:write"])
+    admin_token = make_token(TENANT, ["admin:refresh", "search:read", "ask:read", "kg:write"])
+    user_token = make_token(TENANT, ["search:read", "ask:read", "kg:write"])
 
     # 1) Health check
     print("1. Testing /health...")

@@ -20,7 +20,7 @@ def generate_token():
     payload = {
         "sub": "test-user",
         "tenant_id": "test_tenant",
-        "scopes": ["read", "write"],
+        "scopes": ["search:read", "ask:read", "kg:write"],
         "email": "test@example.com",
         "name": "Test User",
         "iat": now,

@@ -16,7 +16,7 @@ ISSUER = os.getenv("JWT_ISSUER", "https://test-auth.activekg.local")
 def generate_token(tenant_id="test_tenant", scopes=None, user_id="test-user"):
     """Generate a JWT token for testing."""
     if scopes is None:
-        scopes = ["read", "write", "admin:refresh"]
+        scopes = ["search:read", "ask:read", "kg:write", "admin:refresh"]
 
     now = datetime.now(timezone.utc)
     payload = {
@@ -41,9 +41,9 @@ if __name__ == "__main__":
     tenant = sys.argv[1] if len(sys.argv) > 1 else "test_tenant"
 
     # Generate admin token (with admin:refresh scope)
-    admin_token = generate_token(tenant_id=tenant, scopes=["read", "write", "admin:refresh"])
+    admin_token = generate_token(tenant_id=tenant, scopes=["search:read", "ask:read", "kg:write", "admin:refresh"])
     print(f"Admin Token: {admin_token}")
 
     # Generate regular user token (without admin:refresh)
-    user_token = generate_token(tenant_id=tenant, scopes=["read", "write"], user_id="regular-user")
+    user_token = generate_token(tenant_id=tenant, scopes=["search:read", "ask:read", "kg:write"], user_id="regular-user")
     print(f"\nRegular User Token: {user_token}")

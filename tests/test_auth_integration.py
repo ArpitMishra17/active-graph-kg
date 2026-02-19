@@ -35,7 +35,7 @@ def generate_test_jwt(
 ) -> str:
     """Generate a test JWT token."""
     if scopes is None:
-        scopes = ["search:read", "nodes:write", "admin:refresh"]
+        scopes = ["search:read", "ask:read", "kg:write", "admin:refresh"]
 
     now = datetime.utcnow()
     payload = {
@@ -176,7 +176,7 @@ class TestJWTAuthentication:
     def test_scope_based_authorization(self):
         """Admin endpoints should require appropriate scopes."""
         # Token without admin:refresh scope
-        token_no_admin = generate_test_jwt(scopes=["search:read", "nodes:write"])
+        token_no_admin = generate_test_jwt(scopes=["search:read", "kg:write"])
 
         response = requests.post(
             f"{API_URL}/admin/refresh", headers={"Authorization": f"Bearer {token_no_admin}"}
