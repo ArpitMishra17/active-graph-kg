@@ -259,7 +259,7 @@ def seed_database(verify_only: bool = False):
     print()
 
     # Generate tokens
-    admin_token = make_token(TENANT, ["admin:refresh", "nodes:write", "search:read"])
+    admin_token = make_token(TENANT, ["admin:refresh", "kg:write", "search:read"])
 
     # Load data
     seed_nodes = load_seed_data()

@@ -101,7 +101,7 @@ echo "Test 6: /admin/refresh without admin scope"
 TOKEN_NO_ADMIN=$(venv/bin/python scripts/generate_test_jwt.py \
   --tenant test_tenant \
   --actor test_user \
-  --scopes "search:read,nodes:write" | grep "^eyJ" | head -1 || echo "")
+  --scopes "search:read,kg:write" | grep "^eyJ" | head -1 || echo "")
 
 if [ -n "$TOKEN_NO_ADMIN" ]; then
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/admin/refresh" \

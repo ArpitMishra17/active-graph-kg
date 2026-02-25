@@ -11,7 +11,7 @@ payload = {
     "sub": "eval_seeder",
     "tenant_id": "eval_tenant",
     "actor_type": "user",
-    "scopes": ["nodes:write", "admin:refresh"],
+    "scopes": ["kg:write", "admin:refresh"],
     "aud": "activekg",
     "iss": "https://staging-auth.yourcompany.com",
     "iat": datetime.now(timezone.utc),

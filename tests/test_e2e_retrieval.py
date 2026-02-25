@@ -39,7 +39,7 @@ def make_token(tenant_id, scopes):
 @pytest.fixture(scope="module")
 def user_token():
     """Create user token with search and write permissions."""
-    return make_token(TENANT, ["search:read", "nodes:write"])
+    return make_token(TENANT, ["search:read", "ask:read", "kg:write"])
 
 
 @pytest.fixture(scope="module")
