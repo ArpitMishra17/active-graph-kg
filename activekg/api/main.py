@@ -4159,16 +4159,21 @@ def resolve_candidate(
     candidates the request is flagged ``review_required`` and no merge happens
     — merging candidates is an explicit operation, not an implicit side-effect.
     """
+    if JWT_ENABLED and claims:
+        tenant_id = claims.tenant_id
+    else:
+        tenant_id = payload.tenant_id
+    return _execute_candidate_resolve(payload, tenant_id=tenant_id)
+
+
+def _execute_candidate_resolve(
+    payload: CandidateResolveRequest, *, tenant_id: str | None
+) -> CandidateResolveResponse:
     if candidate_repo is None:
         raise HTTPException(status_code=503, detail="CandidateRepository not initialized")
 
     if not payload.identifiers:
         raise HTTPException(status_code=400, detail="at least one identifier is required")
-
-    if JWT_ENABLED and claims:
-        tenant_id = claims.tenant_id
-    else:
-        tenant_id = payload.tenant_id
 
     # 1. Normalize all identifiers up-front; any failure is a 400.
     normalized: list[tuple[str, str, str]] = []  # (type, raw, normalized)
@@ -4313,3 +4318,177 @@ def resolve_candidate(
         matched_identifier=matched_identifier,
         source_record_id=record.source_record_id,
     )
+
+
+# ----------------------------------------------------------------------
+# VantaHire application evidence → canonical candidate
+# ----------------------------------------------------------------------
+
+
+class VantahireApplicationResolveRequest(BaseModel):
+    """Raw VantaHire application payload.
+
+    ActiveKG translates the VantaHire-specific fields below into canonical
+    identifiers and profile data, then routes them through the same resolve-
+    or-create flow used by :func:`resolve_candidate`.
+    """
+
+    application_id: str = Field(..., description="VantaHire application id")
+    resume_id: str | None = None
+    job_id: str | None = None
+    org_id: str | None = None
+
+    applicant_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+
+    linkedin_url: str | None = None
+    github_url: str | None = None
+    medium_url: str | None = None
+    other_links: list[str] = Field(default_factory=list)
+
+    resume_gcp_url: str | None = None
+    skills: list[str] = Field(default_factory=list)
+
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
+    tenant_id: str | None = None
+
+
+_VANTAHIRE_LINK_TYPES: tuple[tuple[str, str], ...] = (
+    ("linkedin_url", "linkedin_url"),
+    ("github_url", "github_url"),
+    ("medium_url", "medium_url"),
+)
+
+
+def _collect_vantahire_identifiers(
+    payload: VantahireApplicationResolveRequest,
+) -> tuple[list[CandidateIdentifierInput], list[dict[str, str]]]:
+    """Translate VantaHire fields into canonical identifier inputs.
+
+    Invalid optional links are dropped (and reported in ``skipped``) rather than
+    failing the whole request — VantaHire data is user-entered and one bad
+    profile URL shouldn't block ingestion of an application whose email is
+    still perfectly good.
+    """
+    identifiers: list[CandidateIdentifierInput] = []
+    skipped: list[dict[str, str]] = []
+
+    def _add_required(itype: str, value: str) -> None:
+        try:
+            normalize_identifier(itype, value)
+        except IdentifierNormalizationError as e:
+            raise HTTPException(status_code=400, detail=f"{itype}: {e}")
+        identifiers.append(CandidateIdentifierInput(identifier_type=itype, value=value))
+
+    def _add_optional(itype: str, value: str | None) -> None:
+        if not value:
+            return
+        try:
+            normalize_identifier(itype, value)
+        except IdentifierNormalizationError as e:
+            skipped.append({"identifier_type": itype, "value": value, "reason": str(e)})
+            return
+        identifiers.append(CandidateIdentifierInput(identifier_type=itype, value=value))
+
+    _add_required("vantahire_application_id", payload.application_id)
+    _add_optional("vantahire_resume_id", payload.resume_id)
+
+    for field_name, itype in _VANTAHIRE_LINK_TYPES:
+        _add_optional(itype, getattr(payload, field_name))
+
+    _add_optional("email", payload.email)
+    _add_optional("phone", payload.phone)
+
+    for link in payload.other_links:
+        if not link:
+            continue
+        # Pick the most specific canonical type we can, falling back to a
+        # generic website url.
+        guessed: str | None = None
+        lowered = link.lower()
+        if "linkedin.com" in lowered:
+            guessed = "linkedin_url"
+        elif "github.com" in lowered:
+            guessed = "github_url"
+        elif "medium.com" in lowered:
+            guessed = "medium_url"
+        elif "twitter.com" in lowered or "x.com" in lowered:
+            guessed = "twitter_url"
+        elif "stackoverflow.com" in lowered:
+            guessed = "stackoverflow_url"
+        else:
+            guessed = "website_url"
+        _add_optional(guessed, link)
+
+    return identifiers, skipped
+
+
+@app.post(
+    "/candidates/resolve/vantahire/application",
+    response_model=CandidateResolveResponse,
+    dependencies=[Depends(require_scope("kg:write"))],
+)
+def resolve_candidate_from_vantahire_application(
+    payload: VantahireApplicationResolveRequest,
+    _rl: None = Depends(require_rate_limit("default")),
+    claims: JWTClaims | None = Depends(get_jwt_claims),
+):
+    """Resolve-or-create a canonical candidate from a VantaHire application.
+
+    Maps VantaHire application fields onto canonical identifiers
+    (``vantahire_application_id``, ``vantahire_resume_id``, ``linkedin_url``,
+    ``github_url``, ``medium_url``, ``email``, ``phone``, plus any profile
+    URLs under ``other_links``) and stores the full application payload in
+    ``candidate_source_records`` with ``source='vantahire'`` /
+    ``source_record_type='application'``.
+
+    Per-field normalization failures on *optional* identifiers are dropped
+    silently; the request only 400s if no usable identifier survives.
+    """
+    identifiers, skipped = _collect_vantahire_identifiers(payload)
+    if not identifiers:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "no usable identifiers in VantaHire payload",
+                "skipped": skipped,
+            },
+        )
+
+    source_payload: dict[str, Any] = payload.model_dump(exclude_none=False)
+    if skipped:
+        source_payload["_skipped_identifiers"] = skipped
+
+    resolve_request = CandidateResolveRequest(
+        source="vantahire",
+        source_record_type="application",
+        source_record_id=payload.application_id,
+        identifiers=identifiers,
+        profile=CandidateProfileInput(
+            display_name=payload.applicant_name,
+            primary_email=payload.email,
+            primary_phone=payload.phone,
+            props={
+                k: v
+                for k, v in {
+                    "job_id": payload.job_id,
+                    "org_id": payload.org_id,
+                    "resume_gcp_url": payload.resume_gcp_url,
+                    "skills": payload.skills or None,
+                }.items()
+                if v
+            },
+        ),
+        payload=source_payload,
+        metadata=payload.source_metadata or {},
+        source_url=payload.resume_gcp_url,
+        tenant_id=payload.tenant_id,
+    )
+
+    if JWT_ENABLED and claims:
+        tenant_id = claims.tenant_id
+    else:
+        tenant_id = payload.tenant_id
+
+    return _execute_candidate_resolve(resolve_request, tenant_id=tenant_id)
