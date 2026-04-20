@@ -4103,6 +4103,14 @@ def get_node_versions(
 class CandidateIdentifierInput(BaseModel):
     identifier_type: str = Field(..., description="Type of identifier (email, linkedin_url, ...)")
     value: str = Field(..., description="Raw identifier value as sent by the upstream source")
+    confidence: float | None = Field(
+        default=None,
+        description="Optional per-identifier confidence from the upstream source",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional per-identifier metadata (e.g. bridge_tier, identity platform)",
+    )
 
 
 class CandidateProfileInput(BaseModel):
@@ -4176,7 +4184,8 @@ def _execute_candidate_resolve(
         raise HTTPException(status_code=400, detail="at least one identifier is required")
 
     # 1. Normalize all identifiers up-front; any failure is a 400.
-    normalized: list[tuple[str, str, str]] = []  # (type, raw, normalized)
+    normalized: list[tuple[str, str, str, float | None, dict[str, Any]]] = []
+    # (type, raw, normalized, confidence, metadata)
     for ident in payload.identifiers:
         if ident.identifier_type not in IDENTIFIER_TYPES:
             raise HTTPException(
@@ -4187,12 +4196,14 @@ def _execute_candidate_resolve(
             norm = normalize_identifier(ident.identifier_type, ident.value)
         except IdentifierNormalizationError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        normalized.append((ident.identifier_type, ident.value, norm))
+        normalized.append(
+            (ident.identifier_type, ident.value, norm, ident.confidence, ident.metadata or {})
+        )
 
     # 2. For each identifier, check if it already belongs to a candidate.
     matches: list[tuple[str, str, str]] = []  # (type, normalized, candidate_id)
     seen_candidate_ids: set[str] = set()
-    for itype, _raw, norm in normalized:
+    for itype, _raw, norm, _conf, _meta in normalized:
         existing = candidate_repo.find_candidate_by_identifier(
             itype, norm, tenant_id=tenant_id
         )
@@ -4271,7 +4282,7 @@ def _execute_candidate_resolve(
     # writer grabbed the identifier between our lookup and insert — surface it
     # and downgrade to review_required rather than silently re-pointing rows.
     conflicts: list[dict[str, Any]] = []
-    for itype, raw, norm in normalized:
+    for itype, raw, norm, conf, meta in normalized:
         try:
             candidate_repo.add_identifier(
                 candidate.candidate_id,
@@ -4279,6 +4290,8 @@ def _execute_candidate_resolve(
                 raw,
                 tenant_id=tenant_id,
                 source=payload.source,
+                confidence=conf,
+                metadata=meta or None,
             )
         except IdentifierConflict:
             conflicts.append(
@@ -4483,6 +4496,226 @@ def resolve_candidate_from_vantahire_application(
         payload=source_payload,
         metadata=payload.source_metadata or {},
         source_url=payload.resume_gcp_url,
+        tenant_id=payload.tenant_id,
+    )
+
+    if JWT_ENABLED and claims:
+        tenant_id = claims.tenant_id
+    else:
+        tenant_id = payload.tenant_id
+
+    return _execute_candidate_resolve(resolve_request, tenant_id=tenant_id)
+
+
+# ----------------------------------------------------------------------
+# Signal sourced-candidate evidence → canonical candidate
+# ----------------------------------------------------------------------
+
+
+class SignalIdentityInput(BaseModel):
+    """A single identity link discovered by Signal (linkedin, github, ...)."""
+
+    platform: str | None = None
+    profileUrl: str | None = None
+    profile_url: str | None = None
+    confidence: float | None = None
+    bridgeTier: str | None = None
+    bridge_tier: str | None = None
+    model_config = {"extra": "allow"}
+
+
+class SignalCandidateResolveRequest(BaseModel):
+    """Raw Signal sourced-candidate / profile payload.
+
+    ActiveKG translates Signal-specific fields below into canonical identifiers
+    and profile data, then routes them through the same resolve-or-create flow
+    used by :func:`resolve_candidate`. The full payload is preserved verbatim
+    in ``candidate_source_records``.
+    """
+
+    signal_candidate_id: str = Field(..., description="Signal's stable candidate id")
+    source_record_type: str = Field(
+        default="sourced_candidate",
+        description="Signal record type: 'sourced_candidate' or 'profile'",
+    )
+
+    linkedinUrl: str | None = None
+    identities: list[SignalIdentityInput] = Field(default_factory=list)
+
+    display_name: str | None = None
+    headline: str | None = None
+    identitySummary: str | None = None
+    aiSummary: str | None = None
+
+    rank: int | float | None = None
+    request_id: str | None = None
+    external_job_id: str | None = None
+
+    sourcing_context: dict[str, Any] = Field(default_factory=dict)
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
+    tenant_id: str | None = None
+
+    model_config = {"extra": "allow"}
+
+
+_SIGNAL_PLATFORM_TO_ITYPE: dict[str, str] = {
+    "linkedin": "linkedin_url",
+    "github": "github_url",
+    "medium": "medium_url",
+    "twitter": "twitter_url",
+    "x": "twitter_url",
+    "stackoverflow": "stackoverflow_url",
+    "stack_overflow": "stackoverflow_url",
+    "portfolio": "portfolio_url",
+    "website": "website_url",
+}
+
+
+def _guess_itype_from_url(url: str) -> str:
+    lowered = url.lower()
+    if "linkedin.com" in lowered:
+        return "linkedin_url"
+    if "github.com" in lowered:
+        return "github_url"
+    if "medium.com" in lowered:
+        return "medium_url"
+    if "twitter.com" in lowered or "x.com" in lowered:
+        return "twitter_url"
+    if "stackoverflow.com" in lowered:
+        return "stackoverflow_url"
+    return "website_url"
+
+
+def _collect_signal_identifiers(
+    payload: SignalCandidateResolveRequest,
+) -> tuple[list[CandidateIdentifierInput], list[dict[str, Any]]]:
+    """Translate Signal fields into canonical identifier inputs.
+
+    Invalid optional identities are dropped and reported in ``skipped`` — one
+    bad profileUrl from a Signal enrichment shouldn't block ingestion of a
+    candidate whose signal_candidate_id and primary linkedin are valid.
+    """
+    identifiers: list[CandidateIdentifierInput] = []
+    skipped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(
+        itype: str,
+        value: str,
+        *,
+        required: bool,
+        confidence: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            norm = normalize_identifier(itype, value)
+        except IdentifierNormalizationError as e:
+            if required:
+                raise HTTPException(status_code=400, detail=f"{itype}: {e}")
+            skipped.append(
+                {"identifier_type": itype, "value": value, "reason": str(e)}
+            )
+            return
+        key = (itype, norm)
+        if key in seen:
+            return
+        seen.add(key)
+        identifiers.append(
+            CandidateIdentifierInput(
+                identifier_type=itype,
+                value=value,
+                confidence=confidence,
+                metadata=metadata or {},
+            )
+        )
+
+    _add("signal_candidate_id", payload.signal_candidate_id, required=True)
+
+    if payload.linkedinUrl:
+        _add("linkedin_url", payload.linkedinUrl, required=False)
+
+    for identity in payload.identities:
+        url = identity.profileUrl or identity.profile_url
+        if not url:
+            continue
+        platform = (identity.platform or "").strip().lower()
+        itype = _SIGNAL_PLATFORM_TO_ITYPE.get(platform) or _guess_itype_from_url(url)
+        bridge_tier = identity.bridgeTier or identity.bridge_tier
+        meta: dict[str, Any] = {}
+        if platform:
+            meta["signal_platform"] = platform
+        if bridge_tier:
+            meta["bridge_tier"] = bridge_tier
+        _add(
+            itype,
+            url,
+            required=False,
+            confidence=identity.confidence,
+            metadata=meta,
+        )
+
+    return identifiers, skipped
+
+
+@app.post(
+    "/candidates/resolve/signal/candidate",
+    response_model=CandidateResolveResponse,
+    dependencies=[Depends(require_scope("kg:write"))],
+)
+def resolve_candidate_from_signal(
+    payload: SignalCandidateResolveRequest,
+    _rl: None = Depends(require_rate_limit("default")),
+    claims: JWTClaims | None = Depends(get_jwt_claims),
+):
+    """Resolve-or-create a canonical candidate from a Signal sourced-candidate payload.
+
+    Maps Signal fields onto canonical identifiers (``signal_candidate_id``,
+    ``linkedin_url`` from ``candidate.linkedinUrl``, and one identifier per
+    entry of ``identities[]``) and stores the full Signal payload in
+    ``candidate_source_records`` with ``source='signal'``. Identity confidence
+    and bridge tier are preserved in identifier metadata so downstream match
+    review can weigh Signal's enrichment quality.
+    """
+    if payload.source_record_type not in {"sourced_candidate", "profile"}:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unsupported Signal source_record_type: {payload.source_record_type!r}"
+            ),
+        )
+
+    identifiers, skipped = _collect_signal_identifiers(payload)
+
+    source_payload: dict[str, Any] = payload.model_dump(exclude_none=False)
+    if skipped:
+        source_payload["_skipped_identifiers"] = skipped
+
+    profile_props: dict[str, Any] = {
+        k: v
+        for k, v in {
+            "headline": payload.headline,
+            "identity_summary": payload.identitySummary,
+            "ai_summary": payload.aiSummary,
+            "rank": payload.rank,
+            "request_id": payload.request_id,
+            "external_job_id": payload.external_job_id,
+            "sourcing_context": payload.sourcing_context or None,
+        }.items()
+        if v is not None
+    }
+
+    resolve_request = CandidateResolveRequest(
+        source="signal",
+        source_record_type=payload.source_record_type,
+        source_record_id=payload.signal_candidate_id,
+        identifiers=identifiers,
+        profile=CandidateProfileInput(
+            display_name=payload.display_name,
+            props=profile_props,
+        ),
+        payload=source_payload,
+        metadata=payload.source_metadata or {},
+        source_url=payload.linkedinUrl,
         tenant_id=payload.tenant_id,
     )
 
