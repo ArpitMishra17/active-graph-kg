@@ -68,7 +68,16 @@ from activekg.extraction.queue import (
     enqueue_extraction_job,
     extraction_queue_depth,
 )
-from activekg.graph.models import Edge, Node
+from activekg.graph.candidate_identifiers import (
+    IDENTIFIER_TYPES,
+    IdentifierNormalizationError,
+    normalize_identifier,
+)
+from activekg.graph.candidate_repository import (
+    CandidateRepository,
+    IdentifierConflict,
+)
+from activekg.graph.models import Candidate, CandidateSourceRecord, Edge, Node
 from activekg.graph.repository import GraphRepository
 
 # Prometheus observability
@@ -353,6 +362,7 @@ if TEST_MODE:
     pattern_store = None
     trigger_engine = None
     scheduler: RefreshScheduler | None = None
+    candidate_repo: CandidateRepository | None = None
     logger.warning("Running in TEST_MODE - DB connections deferred")
 else:
     # Normal mode: eager initialization
@@ -361,6 +371,7 @@ else:
     pattern_store = PatternStore(DSN)
     trigger_engine = TriggerEngine(pattern_store, repo)
     scheduler = None
+    candidate_repo = CandidateRepository(DSN)
 
 # Mount admin connectors router (minimal MVP)
 app.include_router(connectors_admin_router)
@@ -4082,3 +4093,223 @@ def get_node_versions(
             "Node versions query failed", extra_fields={"node_id": node_id, "error": str(e)}
         )
         raise HTTPException(status_code=500, detail=f"Node versions query failed: {str(e)}")
+
+
+# ----------------------------------------------------------------------
+# Candidate identity resolution
+# ----------------------------------------------------------------------
+
+
+class CandidateIdentifierInput(BaseModel):
+    identifier_type: str = Field(..., description="Type of identifier (email, linkedin_url, ...)")
+    value: str = Field(..., description="Raw identifier value as sent by the upstream source")
+
+
+class CandidateProfileInput(BaseModel):
+    display_name: str | None = None
+    primary_email: str | None = None
+    primary_phone: str | None = None
+    props: dict[str, Any] = Field(default_factory=dict)
+
+
+class CandidateResolveRequest(BaseModel):
+    source: str = Field(..., description="Upstream source name, e.g. 'vantahire', 'signal'")
+    source_record_type: str = Field(..., description="Source record type, e.g. 'application', 'profile'")
+    source_record_id: str = Field(..., description="Upstream-stable record id")
+    identifiers: list[CandidateIdentifierInput] = Field(
+        default_factory=list,
+        description="Identifiers for exact-match resolution",
+    )
+    profile: CandidateProfileInput | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    source_url: str | None = None
+    tenant_id: str | None = None
+
+
+class MatchedIdentifier(BaseModel):
+    identifier_type: str
+    value_normalized: str
+
+
+class CandidateResolveResponse(BaseModel):
+    candidate_id: str | None
+    resolution_status: str  # "created" | "matched" | "review_required"
+    matched_identifier: MatchedIdentifier | None = None
+    source_record_id: str | None = None
+    conflicts: list[dict[str, Any]] | None = None
+
+
+@app.post(
+    "/candidates/resolve",
+    response_model=CandidateResolveResponse,
+    dependencies=[Depends(require_scope("kg:write"))],
+)
+def resolve_candidate(
+    payload: CandidateResolveRequest,
+    _rl: None = Depends(require_rate_limit("default")),
+    claims: JWTClaims | None = Depends(get_jwt_claims),
+):
+    """Resolve-or-create a canonical ActiveKG candidate from upstream evidence.
+
+    Exact identifier-based matching only: if any normalized identifier already
+    belongs to a candidate, that candidate is returned; otherwise a new
+    canonical candidate is created. Upstream payloads are preserved verbatim in
+    ``candidate_source_records``. If identifiers point at multiple distinct
+    candidates the request is flagged ``review_required`` and no merge happens
+    — merging candidates is an explicit operation, not an implicit side-effect.
+    """
+    if candidate_repo is None:
+        raise HTTPException(status_code=503, detail="CandidateRepository not initialized")
+
+    if not payload.identifiers:
+        raise HTTPException(status_code=400, detail="at least one identifier is required")
+
+    if JWT_ENABLED and claims:
+        tenant_id = claims.tenant_id
+    else:
+        tenant_id = payload.tenant_id
+
+    # 1. Normalize all identifiers up-front; any failure is a 400.
+    normalized: list[tuple[str, str, str]] = []  # (type, raw, normalized)
+    for ident in payload.identifiers:
+        if ident.identifier_type not in IDENTIFIER_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown identifier_type: {ident.identifier_type!r}",
+            )
+        try:
+            norm = normalize_identifier(ident.identifier_type, ident.value)
+        except IdentifierNormalizationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        normalized.append((ident.identifier_type, ident.value, norm))
+
+    # 2. For each identifier, check if it already belongs to a candidate.
+    matches: list[tuple[str, str, str]] = []  # (type, normalized, candidate_id)
+    seen_candidate_ids: set[str] = set()
+    for itype, _raw, norm in normalized:
+        existing = candidate_repo.find_candidate_by_identifier(
+            itype, norm, tenant_id=tenant_id
+        )
+        if existing is not None:
+            matches.append((itype, norm, existing.candidate_id))
+            seen_candidate_ids.add(existing.candidate_id)
+
+    # 3. Conflicting matches across different candidates → review_required. We
+    # do NOT attach identifiers or write a source record in this case: merging
+    # canonical candidates is an explicit operation, not a silent side-effect.
+    if len(seen_candidate_ids) > 1:
+        conflicts = [
+            {
+                "identifier_type": itype,
+                "value_normalized": norm,
+                "candidate_id": cid,
+            }
+            for itype, norm, cid in matches
+        ]
+        logger.warning(
+            "candidate resolve flagged review_required",
+            extra_fields={
+                "source": payload.source,
+                "source_record_id": payload.source_record_id,
+                "candidate_count": len(seen_candidate_ids),
+                "tenant_id": tenant_id,
+            },
+        )
+        return CandidateResolveResponse(
+            candidate_id=None,
+            resolution_status="review_required",
+            matched_identifier=None,
+            source_record_id=None,
+            conflicts=conflicts,
+        )
+
+    profile = payload.profile or CandidateProfileInput()
+
+    if len(seen_candidate_ids) == 1:
+        candidate_id = next(iter(seen_candidate_ids))
+        candidate = candidate_repo.get_candidate(candidate_id, tenant_id=tenant_id)
+        assert candidate is not None
+        status = "matched"
+        matched_itype, matched_norm, _ = matches[0]
+        matched_identifier = MatchedIdentifier(
+            identifier_type=matched_itype,
+            value_normalized=matched_norm,
+        )
+        # Fill in profile fields only when currently empty — never clobber
+        # canonical data with upstream drift.
+        updates: dict[str, Any] = {}
+        if profile.display_name and not candidate.display_name:
+            updates["display_name"] = profile.display_name
+        if profile.primary_email and not candidate.primary_email:
+            updates["primary_email"] = profile.primary_email
+        if profile.primary_phone and not candidate.primary_phone:
+            updates["primary_phone"] = profile.primary_phone
+        if updates:
+            candidate_repo.update_candidate(
+                candidate.candidate_id, tenant_id=tenant_id, **updates
+            )
+    else:
+        candidate = Candidate(
+            tenant_id=tenant_id,
+            display_name=profile.display_name,
+            primary_email=profile.primary_email,
+            primary_phone=profile.primary_phone,
+            props=profile.props or {},
+            metadata=payload.metadata or {},
+        )
+        candidate_repo.create_candidate(candidate)
+        status = "created"
+        matched_identifier = None
+
+    # 4. Attach every (valid) identifier. Any conflict here means a concurrent
+    # writer grabbed the identifier between our lookup and insert — surface it
+    # and downgrade to review_required rather than silently re-pointing rows.
+    conflicts: list[dict[str, Any]] = []
+    for itype, raw, norm in normalized:
+        try:
+            candidate_repo.add_identifier(
+                candidate.candidate_id,
+                itype,
+                raw,
+                tenant_id=tenant_id,
+                source=payload.source,
+            )
+        except IdentifierConflict:
+            conflicts.append(
+                {
+                    "identifier_type": itype,
+                    "value_normalized": norm,
+                    "reason": "identifier owned by a different candidate",
+                }
+            )
+
+    if conflicts:
+        return CandidateResolveResponse(
+            candidate_id=candidate.candidate_id,
+            resolution_status="review_required",
+            matched_identifier=matched_identifier,
+            source_record_id=None,
+            conflicts=conflicts,
+        )
+
+    # 5. Upsert the source record — idempotent on
+    # (tenant_id, source, source_record_type, source_record_id).
+    record = candidate_repo.upsert_source_record(
+        CandidateSourceRecord(
+            candidate_id=candidate.candidate_id,
+            tenant_id=tenant_id,
+            source=payload.source,
+            source_record_type=payload.source_record_type,
+            source_record_id=payload.source_record_id,
+            source_url=payload.source_url,
+            payload=payload.payload or {},
+        )
+    )
+
+    return CandidateResolveResponse(
+        candidate_id=candidate.candidate_id,
+        resolution_status=status,
+        matched_identifier=matched_identifier,
+        source_record_id=record.source_record_id,
+    )
